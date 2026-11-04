@@ -1,0 +1,29 @@
+services:
+  lucoa:
+    build:
+      context: .
+    image: lucoa:local
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 20s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      # Interface binding is NOT a source-subnet firewall. See README.md.
+      # Honor the old setting so existing loopback-only .env files stay local.
+      - "${LUCOA_BIND_IP:-${LBOA_BIND_IP:-10.0.0.50}}:7317:7317"
+    environment:
+      OVIS_RUNTIME: herdr-core
+      OVIS_TOKEN: "${OVIS_TOKEN:?Set OVIS_TOKEN in a private .env file or the shell}"
+      OVIS_AUTO_UPDATE: "0"
+      OVIS_TELEMETRY: "0"
+    volumes:
+      # Installations live in /opt/lucoa, not in these persistent mounts.
+      - home:/home/node
+      - workspace:/workspace
+
+volumes:
+  home:
+  workspace:

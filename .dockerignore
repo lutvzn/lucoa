@@ -1,0 +1,12 @@
+# Allowlist: no credentials, .env, workspaces, or host configuration in context.
+**
+!Dockerfile
+!build/
+!build/versions.env
+!build/install-upstream.sh
+!build/agents/
+!build/agents/package.json
+!build/agents/package-lock.json
+!scripts/
+!scripts/entrypoint.sh
+!scripts/healthcheck.mjs

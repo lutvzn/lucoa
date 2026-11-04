@@ -1,0 +1,71 @@
+# syntax=docker/dockerfile:1
+# Multi-architecture node:26-alpine index, reviewed 2026-11-03.
+FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS runtime-base
+
+# Root is used only for image construction. No privilege-escalation packages.
+RUN apk add --no-cache bash ca-certificates curl git libgcc libstdc++ ripgrep python3 \
+    && rm -f /bin/su /usr/bin/su \
+    && mkdir -p /opt/lucoa/bin /opt/lucoa/agents /opt/lucoa/ovis /workspace \
+    && chown -R node:node /opt/lucoa /workspace /home/node
+
+ENV HOME=/home/node \
+    PATH=/opt/lucoa/bin:/home/node/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    npm_config_prefix=/opt/lucoa \
+    npm_config_update_notifier=false
+
+FROM runtime-base AS build
+USER root
+RUN apk add --no-cache unzip
+COPY --chown=node:node build/versions.env build/install-upstream.sh /tmp/lucoa-build/
+USER node
+RUN sh /tmp/lucoa-build/install-upstream.sh
+
+WORKDIR /opt/lucoa/agents
+COPY --chown=node:node build/agents/package.json build/agents/package-lock.json ./
+# Skip arbitrary dependency lifecycle scripts, then run only Claude's reviewed
+# binary-linking postinstall. Keep musl optional dependencies enabled.
+RUN npm ci --ignore-scripts --no-audit --no-fund \
+    && node node_modules/@anthropic-ai/claude-code/install.cjs \
+    && ln -s ../agents/node_modules/.bin/claude /opt/lucoa/bin/claude \
+    && ln -s ../agents/node_modules/.bin/pi /opt/lucoa/bin/pi \
+    && claude --version && pi --version
+
+WORKDIR /opt/lucoa/ovis
+RUN bun install --frozen-lockfile --ignore-scripts \
+    && bun run build \
+    && rm -rf node_modules \
+    && bun install --production --frozen-lockfile --ignore-scripts
+
+FROM runtime-base AS final
+COPY --from=build --chown=node:node /opt/lucoa /opt/lucoa
+COPY --chown=node:node build/versions.env /opt/lucoa/versions.env
+COPY scripts/entrypoint.sh scripts/healthcheck.mjs /usr/local/lib/lucoa/
+RUN chmod 755 /usr/local/lib/lucoa/entrypoint.sh
+
+ENV OVIS_RUNTIME=herdr-core \
+    OVIS_HC_BIN=/opt/lucoa/bin/herdr-core \
+    OVIS_STATE_DIR=/home/node/.config/ovis \
+    OVIS_AUTO_UPDATE=0 \
+    OVIS_TELEMETRY=0 \
+    HOST=0.0.0.0 \
+    PORT=7317 \
+    XDG_CONFIG_HOME=/home/node/.config \
+    XDG_STATE_HOME=/home/node/.local/state \
+    XDG_CACHE_HOME=/home/node/.cache \
+    XDG_RUNTIME_DIR=/tmp/lucoa-runtime \
+    SHELL=/bin/bash \
+    TERM=xterm-256color \
+    USE_BUILTIN_RIPGREP=0 \
+    DISABLE_AUTOUPDATER=1 \
+    PI_SKIP_VERSION_CHECK=1
+
+WORKDIR /workspace
+USER node
+EXPOSE 7317
+STOPSIGNAL SIGTERM
+HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
+    CMD ["node", "/usr/local/lib/lucoa/healthcheck.mjs"]
+ENTRYPOINT ["/usr/local/lib/lucoa/entrypoint.sh"]
+# Direct upstream server entry: prebuilt UI, no development server or runtime build.
+# The container engine owns restarts; this bypasses Ovis's managed updater.
+CMD ["bun", "/opt/lucoa/ovis/server/index.ts"]
