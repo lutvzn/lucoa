@@ -64,13 +64,15 @@ The build needs internet access to the container registry, Alpine repositories, 
 ## Publish to GitHub Container Registry
 
 In GitHub, open **Actions → Publish container to GHCR → Run workflow** and
-select the branch to build. The workflow builds a **Linux amd64** image, runs
+select the branch to build. Check **Also tag as latest** if this build should
+replace the current `latest` image (unchecked by default). The workflow builds a **Linux amd64** image, runs
 the credential-free smoke suite, and publishes only if the tests pass.
 
 Images are published as:
 
 - `ghcr.io/lutvzn/lucoa:sha-<full-commit-sha>` for every successful run.
-- `ghcr.io/lutvzn/lucoa:latest` when run against the repository's default branch.
+- `ghcr.io/lutvzn/lucoa:latest` only when **Also tag as latest** is checked.
+  This can publish from any selected branch, so choose the branch carefully.
 
 The workflow uses the automatic `GITHUB_TOKEN` with `packages: write`; no
 personal access token or registry secret needs to be configured. Repository or
