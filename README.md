@@ -8,7 +8,7 @@ with persistent storage for your projects, settings, and agent credentials.
 Browser → Ovis → herdr-core → Claude Code / pi
 ```
 
-- **Base:** Node 26 on Alpine Linux (musl).
+- **Base:** Node 26 on Debian 13 "trixie" slim (glibc).
 - **Runtime user:** `node`, UID/GID `1000:1000`; no sudo or privileged mode.
 - **Default workload:** Ovis in the foreground with `OVIS_RUNTIME=herdr-core`.
 - **Also included:** Python 3, uv, uvx, and key-only SSH via Dropbear.
@@ -531,8 +531,9 @@ in the persisted home; `~/.local/bin` is already on PATH. Downloads need network
 access. Prefer the included system Python; other versions depend on uv's
 platform-specific download availability.
 
-Alpine uses musl. Native extensions need compatible wheels or extra build
-dependencies; compilers, Python development headers, and pip are not bundled.
+The base is Debian (glibc), so standard `manylinux` wheels apply. Native
+extensions without wheels need extra build dependencies; compilers, Python
+development headers, and pip are not bundled.
 Recreate virtual environments after an incompatible system Python update, and
 do not reuse environments created on incompatible hosts.
 
@@ -692,27 +693,27 @@ set `LUCOA_IMAGE=lucoa:local` in `.env` after building and run
 `docker compose up -d --pull never`. For Quadlet, set
 `Image=localhost/lucoa:local` and `Pull=never`, then reload/restart the service.
 
-Local builds need access to the container registry, Alpine repositories, npm,
+Local builds need access to the container registry, Debian repositories, npm,
 GitHub, and `releases.herdr.dev`, but never provider credentials.
 
 ### Included versions
 
 | Component | Pin |
 | --- | --- |
-| Base | `node:26-alpine`, digest pinned in `Dockerfile` |
-| Node / Alpine at that digest | 26.13.0 / 3.24.3 |
+| Base | `node:26-trixie-slim`, digest pinned in `Dockerfile` |
+| Node / Debian at that digest | 26.13.0 / 13 (trixie) |
 | Ovis | 0.4.22, revision `a4ff0c942716602c43362f05c8511984e2bcae44` |
 | herdr-core (`hc`) | 0.1.17, protocol generation 1 |
-| Bun (musl) | 1.4.2 |
-| Claude Code (musl) | 2.1.317 |
+| Bun (glibc, x64 baseline) | 1.4.2 |
+| Claude Code (glibc native package) | 2.1.317 |
 | pi | `@earendil-works/pi-coding-agent` 1.5.0 |
-| Python 3 | Alpine package; version follows its repository |
-| Dropbear SSH | Alpine package; version follows its repository |
-| uv / uvx (musl) | 0.13.7 |
+| Python 3 | Debian package; version follows its repository |
+| Dropbear SSH | Debian `dropbear-bin` package; version follows its repository |
+| uv / uvx (glibc) | 0.13.7 |
 
 Upstream archives are SHA-256 checked against [`build/versions.env`](build/versions.env).
 Agent dependencies use [`build/agents/package-lock.json`](build/agents/package-lock.json);
-Ovis uses its upstream Bun lockfile and patches. Alpine repositories are not
+Ovis uses its upstream Bun lockfile and patches. Debian repositories are not
 snapshotted, so OS builds are not bit-for-bit reproducible.
 
 Bun builds the UI during image construction. Startup runs the production server,

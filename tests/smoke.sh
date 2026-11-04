@@ -23,7 +23,7 @@ case "$configured_user" in ''|root|0|0:*) echo 'FAIL: image default user is root
 "$engine" run --rm --cap-drop=ALL --security-opt=no-new-privileges "$image" sh -eu -c '
     test "$(id -u)" = 1000
     test "$(node -p "process.versions.node.split(\".\")[0]")" = 26
-    test -f /etc/alpine-release
+    test -f /etc/debian_version
     for tool in bun hc herdr-core claude pi git rg bash python3 uv uvx dropbear dropbearkey; do command -v "$tool"; done
     bun --version; hc --version; claude --version; pi --version
     python3 --version; uv --version; uvx --version

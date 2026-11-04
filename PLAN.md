@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build **lucoa**: an always-on, browser-accessible agent server based on **`node:26-alpine`**. Run **Ovis** (https://ovis.sh) continuously with **`OVIS_RUNTIME=herdr-core`**, backed by bundled **herdr-core**, **Claude Code**, and **pi agent**, all under an unprivileged user.
+Build **lucoa**: an always-on, browser-accessible agent server based on **`node:26-trixie-slim`** (Debian 13; formerly `node:26-alpine`). Run **Ovis** (https://ovis.sh) continuously with **`OVIS_RUNTIME=herdr-core`**, backed by bundled **herdr-core**, **Claude Code**, and **pi agent**, all under an unprivileged user.
 
 The primary workflow is opening Ovis in a browser, starting agents, interacting through chat/live terminals, and reconnecting later without stopping the agents. An interactive container shell is a maintenance override, not the default workload.
 
@@ -17,6 +17,17 @@ loopback bindings. Historical results below retain the names actually tested.
 The live `lboa` deployment, volumes, credentials, and rollback container were not
 changed. Earlier smoke/build results do not validate the renamed image; rebuild
 and rerun disposable smoke tests before deployment.
+
+## Debian base migration — 2026-11-04 (not built)
+
+- Base changed to `node:26-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39` (image created 2026-10-28; Node 26.13.0; Debian trixie; index lists amd64, arm64/v8, ppc64le, s390x). The base already provides `node` as UID/GID 1000 with `/home/node`.
+- Packages via `apt-get --no-install-recommends`: bash, ca-certificates, curl, git, ripgrep, python3, `dropbear-bin` (binaries only, no init script/service); `unzip` only in the build stage. libgcc/libstdc++ are already in the base.
+- Hardening: `su` removed and every setuid/setgid file on the root filesystem has its bits stripped, so the existing smoke assertions (`! command -v su`, no `-perm /6000` files) still apply.
+- Bun 1.4.2 switched to `bun-linux-x64-baseline` / `bun-linux-aarch64` (glibc); uv 0.13.7 switched to `*-unknown-linux-gnu`. SHA-256 values match upstream `SHASUMS256.txt` / `sha256.sum` and were confirmed by download. herdr-core 0.1.17 archives are static ELF (no interpreter) and keep their pins. Claude Code's lockfile already includes the glibc `@anthropic-ai/claude-code-linux-{x64,arm64}` packages.
+- Smoke test now checks `/etc/debian_version` instead of `/etc/alpine-release`.
+- System Python moves from Alpine 3.14 to Debian's 3.13 series; recreate virtual environments made with the Alpine image. Standard manylinux wheels now apply.
+- **Pending:** image build, both smoke suites, image size comparison, arm64, and confirming the stripped setuid bits do not affect any bundled tool. No container engine was available in the authoring session; nothing was built, published, or deployed. Live `lboa` is unchanged.
+- Historical sections below describe the Alpine image as tested.
 
 ## SSH addition — 2026-11-04 (not deployed)
 
@@ -129,7 +140,7 @@ Browser
 
 ## Non-negotiable requirements
 
-- Use `node:26-alpine` as the base image. If it is unavailable, report the blocker rather than silently choosing another base.
+- Use `node:26-trixie-slim` as the base image (changed from `node:26-alpine` at the user's request). If it is unavailable, report the blocker rather than silently choosing another base.
 - Set an explicit non-root `USER` in the final image.
 - Do not include rootful packages: no bundled tool may require root privileges, privilege escalation, or a root-owned service at runtime.
 - Do not include `sudo`, `doas`, or require privileged container mode or a host container-engine socket.
@@ -218,7 +229,7 @@ Tasks:
 Automated smoke tests should:
 
 - [x] Inspect the image user and confirm UID 1000 at runtime.
-- [x] Confirm Node 26 and the Alpine base.
+- [x] Confirm Node 26 and the Alpine base. (Now checks Debian; rerun pending for the new base.)
 - [x] Run every bundled CLI's version command without provider credentials.
 - [x] Confirm writable home, workspace, configuration, cache, and installation prefix.
 - [x] Confirm sudo/doas/su are not on PATH and installs do not depend on root's home.

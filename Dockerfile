@@ -1,10 +1,16 @@
 # syntax=docker/dockerfile:1
-# Multi-architecture node:26-alpine index, reviewed 2026-11-03.
-FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS runtime-base
+# Multi-architecture node:26-trixie-slim (Debian 13) index, reviewed 2026-11-04.
+FROM node:26-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS runtime-base
 
 # Root is used only for image construction. No privilege-escalation packages.
-RUN apk add --no-cache bash ca-certificates curl git libgcc libstdc++ ripgrep python3 dropbear \
+# dropbear-bin ships the server binaries without the root-run init service.
+# Remove su and strip every setuid/setgid bit from the base image.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        bash ca-certificates curl git ripgrep python3 dropbear-bin \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb \
     && rm -f /bin/su /usr/bin/su \
+    && find / -xdev -type f -perm /6000 -exec chmod a-s {} + \
     && mkdir -p /opt/lucoa/bin /opt/lucoa/agents /opt/lucoa/ovis /workspace \
     && chown -R node:node /opt/lucoa /workspace /home/node
 
@@ -15,7 +21,9 @@ ENV HOME=/home/node \
 
 FROM runtime-base AS build
 USER root
-RUN apk add --no-cache unzip
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends unzip \
+    && rm -rf /var/lib/apt/lists/*
 COPY --chown=node:node build/versions.env build/install-upstream.sh /tmp/lucoa-build/
 USER node
 RUN sh /tmp/lucoa-build/install-upstream.sh
@@ -23,7 +31,8 @@ RUN sh /tmp/lucoa-build/install-upstream.sh
 WORKDIR /opt/lucoa/agents
 COPY --chown=node:node build/agents/package.json build/agents/package-lock.json ./
 # Skip arbitrary dependency lifecycle scripts, then run only Claude's reviewed
-# binary-linking postinstall. Keep musl optional dependencies enabled.
+# binary-linking postinstall. Keep optional dependencies enabled so npm selects
+# the glibc native package for this platform.
 RUN npm ci --ignore-scripts --no-audit --no-fund \
     && node node_modules/@anthropic-ai/claude-code/install.cjs \
     && ln -s ../agents/node_modules/.bin/claude /opt/lucoa/bin/claude \

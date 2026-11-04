@@ -9,11 +9,11 @@
 - Claude Code
 - pi agent
 
-The image must use **`node:26-alpine`** as its base. Its default workload is the Ovis server with **`OVIS_RUNTIME=herdr-core`**, running continuously as a non-root user. An interactive shell is an optional command override, not the default workload.
+The image must use **`node:26-trixie-slim`** (Debian 13, glibc) as its base, switched from `node:26-alpine` at the user's request on 2026-11-04. Its default workload is the Ovis server with **`OVIS_RUNTIME=herdr-core`**, running continuously as a non-root user. An interactive shell is an optional command override, not the default workload.
 
 ## Container requirements
 
-- Keep the image minimal and compatible with Alpine Linux and musl libc.
+- Keep the image minimal and compatible with Debian (trixie) and glibc. Install OS packages with `apt-get install --no-install-recommends` and clear apt lists in the same layer.
 - Include Ovis and all three agent/runtime tools. Make agent/runtime executables available on `PATH` to both Ovis and interactive shells.
 - Run Ovis in the foreground under a signal-safe launch strategy; leave container restart policy to the container engine.
 - Persist Ovis state, agent configuration/authentication, herdr-core state, and workspaces in appropriate user-writable mounts. Persistent files do not preserve live processes across container restarts.
@@ -71,6 +71,13 @@ Do not rename/redeploy them or create replacement volumes without approval.
 - Rebuilt `localhost/lucoa:ssh` and reran both smoke suites after adding raw environment key import: multiline key login, preservation without input, conflicting inputs, blank input, and private-key text rejection passed.
 - This image has **not** replaced the live `lboa` service. Herdr Desktop graphical onboarding, Docker runtime, hosted CI, Quadlet boot, arm64, and network ingress filtering remain untested. See README.md for setup and PLAN.md for details.
 
+### Debian base migration (not built)
+
+- Switched the Dockerfile base from `node:26-alpine` to digest-pinned `node:26-trixie-slim` (Node **26.13.0**, Debian 13; index lists amd64/arm64). OS packages now come from apt; Dropbear uses `dropbear-bin` (no root-run init service). `su` is removed and all setuid/setgid bits are stripped at build time.
+- Bun and uv now use glibc release archives (checksums verified against upstream SHA256 lists and by download). herdr-core archives are static and unchanged. Claude Code selects its glibc native optional dependency from the existing lockfile.
+- Python is now the Debian `python3` package (3.13 series in trixie) instead of Alpine's 3.14. Existing virtual environments created on the Alpine image are not compatible.
+- **Not built or tested:** no container engine was available in the authoring session. Build with `podman build --format docker` and run both smoke suites before publishing or deploying. The live `lboa` service still runs the Alpine-based `localhost/lboa:python-uv` image; Alpine-specific notes in the handoff above describe that image.
+
 ### Current access and network boundary
 
 - The live instance publishes **only `127.0.0.1:7317:7317`**. Open **http://127.0.0.1:7317** locally.
@@ -108,7 +115,7 @@ Do not rename/redeploy them or create replacement volumes without approval.
 
 When changing the image or installation scripts:
 
-1. Build the image using `node:26-alpine` as the base.
+1. Build the image using `node:26-trixie-slim` as the base.
 2. Confirm the default runtime user is not root (`id -u` must not return `0`).
 3. Confirm Ovis starts with `OVIS_RUNTIME=herdr-core` as the default user and that herdr-core, Claude Code, and pi agent are available to it.
 4. Validate HTTP readiness, browser/WebSocket terminal access, and rejection of unauthorized terminal/API access without exposing credentials.
