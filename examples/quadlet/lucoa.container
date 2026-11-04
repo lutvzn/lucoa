@@ -1,0 +1,26 @@
+# Rootless installation: ~/.config/containers/systemd/lucoa.container
+# See README.md before starting; do not run alongside another lucoa deployment.
+[Unit]
+Description=lucoa Ovis coding-agent server
+
+[Container]
+Image=localhost/lucoa:local
+Pull=never
+ContainerName=lucoa
+EnvironmentFile=%h/.config/lucoa/lucoa.env
+PublishPort=127.0.0.1:7317:7317
+Volume=lucoa-home:/home/node
+Volume=lucoa-workspace:/workspace
+RunInit=true
+DropCapability=all
+NoNewPrivileges=true
+StopTimeout=20
+
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
