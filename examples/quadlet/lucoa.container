@@ -4,13 +4,15 @@
 Description=lucoa Ovis coding-agent server
 
 [Container]
-Image=localhost/lucoa:local
-Pull=never
+Image=ghcr.io/lutvzn/lucoa:latest
+Pull=missing
 ContainerName=lucoa
 EnvironmentFile=%h/.config/lucoa/lucoa.env
-PublishPort=127.0.0.1:7317:7317
-# Reserved for container SSH; an SSH server is not implemented yet.
-PublishPort=127.0.0.1:2222:2222
+# All host IPv4 interfaces by default. Edit these bindings and configure the
+# host firewall to control access; interface binding is not a source allowlist.
+PublishPort=0.0.0.0:7317:7317
+# Key-only SSH as node; provision authorized_keys before connecting.
+PublishPort=0.0.0.0:2222:2222
 Volume=lucoa-home:/home/node
 Volume=lucoa-workspace:/workspace
 RunInit=true

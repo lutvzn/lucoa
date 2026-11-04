@@ -3,7 +3,7 @@
 FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS runtime-base
 
 # Root is used only for image construction. No privilege-escalation packages.
-RUN apk add --no-cache bash ca-certificates curl git libgcc libstdc++ ripgrep python3 \
+RUN apk add --no-cache bash ca-certificates curl git libgcc libstdc++ ripgrep python3 dropbear \
     && rm -f /bin/su /usr/bin/su \
     && mkdir -p /opt/lucoa/bin /opt/lucoa/agents /opt/lucoa/ovis /workspace \
     && chown -R node:node /opt/lucoa /workspace /home/node
@@ -39,10 +39,13 @@ RUN bun install --frozen-lockfile --ignore-scripts \
 FROM runtime-base AS final
 COPY --from=build --chown=node:node /opt/lucoa /opt/lucoa
 COPY --chown=node:node build/versions.env /opt/lucoa/versions.env
-COPY scripts/entrypoint.sh scripts/healthcheck.mjs /usr/local/lib/lucoa/
-RUN chmod 755 /usr/local/lib/lucoa/entrypoint.sh
+COPY scripts/entrypoint.sh scripts/healthcheck.mjs scripts/services.mjs scripts/ssh-shell.sh /usr/local/lib/lucoa/
+RUN chmod 755 /usr/local/lib/lucoa/entrypoint.sh /usr/local/lib/lucoa/ssh-shell.sh \
+    && sed -i 's|^node:\(.*\):[^:]*$|node:\1:/usr/local/lib/lucoa/ssh-shell.sh|' /etc/passwd \
+    && printf '%s\n' /usr/local/lib/lucoa/ssh-shell.sh >> /etc/shells
 
-ENV OVIS_RUNTIME=herdr-core \
+ENV LUCOA_SSH_ENABLED=1 \
+    OVIS_RUNTIME=herdr-core \
     OVIS_HC_BIN=/opt/lucoa/bin/herdr-core \
     OVIS_STATE_DIR=/home/node/.config/ovis \
     OVIS_AUTO_UPDATE=0 \
@@ -61,7 +64,7 @@ ENV OVIS_RUNTIME=herdr-core \
 
 WORKDIR /workspace
 USER node
-EXPOSE 7317
+EXPOSE 7317 2222
 STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
     CMD ["node", "/usr/local/lib/lucoa/healthcheck.mjs"]

@@ -24,7 +24,7 @@ case "$configured_user" in ''|root|0|0:*) echo 'FAIL: image default user is root
     test "$(id -u)" = 1000
     test "$(node -p "process.versions.node.split(\".\")[0]")" = 26
     test -f /etc/alpine-release
-    for tool in bun hc herdr-core claude pi git rg bash python3 uv uvx; do command -v "$tool"; done
+    for tool in bun hc herdr-core claude pi git rg bash python3 uv uvx dropbear dropbearkey; do command -v "$tool"; done
     bun --version; hc --version; claude --version; pi --version
     python3 --version; uv --version; uvx --version
     ! command -v sudo

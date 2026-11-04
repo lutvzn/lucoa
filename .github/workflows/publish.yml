@@ -45,7 +45,9 @@ jobs:
       - name: Run credential-free smoke tests
         env:
           IMAGE: ${{ steps.image.outputs.name }}
-        run: sh tests/smoke.sh "${IMAGE}:sha-${GITHUB_SHA}"
+        run: |
+          sh tests/smoke.sh "${IMAGE}:sha-${GITHUB_SHA}"
+          sh tests/ssh.sh "${IMAGE}:sha-${GITHUB_SHA}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3

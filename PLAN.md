@@ -18,6 +18,28 @@ The live `lboa` deployment, volumes, credentials, and rollback container were no
 changed. Earlier smoke/build results do not validate the renamed image; rebuild
 and rerun disposable smoke tests before deployment.
 
+## SSH addition — 2026-11-04 (not deployed)
+
+### Public-key inputs and GHCR examples
+
+- Added `LUCOA_SSH_AUTHORIZED_KEYS` for public-key text, including newline-separated keys. It replaces the persisted authorized key set; empty/unset input preserves existing keys. Rejects whitespace-only text, private-key PEM markers, and setting both nonempty text/file inputs. Does not print supplied keys, and unsets the text before starting services.
+- README now documents exec-based provisioning, environment files/exported variables, and mounted public-key files for direct run, Compose, and Quadlet, including replacement/revocation behavior and runtime UID permissions.
+- Switched deployment examples, Compose, and Quadlet to `ghcr.io/lutvzn/lucoa:latest`; Compose supports `LUCOA_IMAGE`. Local builds and immutable-tag/digest choices remain documented. Quadlet uses `Pull=missing`, with explicit pull/restart for updates. No GHCR image was published; users need a tag built from this source to use the new features.
+- Rebuilt `localhost/lucoa:ssh` (image ID `3db1d304ceba869614aa6a91795a03457dec64a7338759433256106bfcdc5cb5`) and reran the full existing smoke suite and expanded SSH suite successfully. Additional checks passed for environment-based multiline key login, preservation without input, and rejection of conflicting/blank/private-key text inputs. Live `lboa`, volumes, token, port bindings, firewall, and Traefik were untouched.
+
+### Initial SSH implementation
+
+- Added Alpine-packaged Dropbear (resolved to 2026.91-r0) on port 2222. It runs as UID 1000 without capabilities or privilege escalation; password login, root login, and port forwarding are disabled. Ovis authentication remains required.
+- New deployment defaults publish Ovis and SSH on `0.0.0.0`; users control interface bindings and host/network source restrictions. Live loopback publishing and private `.env` were not changed.
+- SSH defaults enabled, with an initially empty `~/.ssh/authorized_keys` allowing no logins. Public keys may be provisioned via engine exec or `LUCOA_SSH_AUTHORIZED_KEYS_FILE`; the server Ed25519 host key is generated at runtime in the persistent home. `LUCOA_SSH_ENABLED=0` disables the listener.
+- Added a small Node supervisor for Ovis and SSH, forwarding shutdown signals and stopping the container on unexpected service failure. Added an SSH shell wrapper supplying tool PATH and default hc XDG paths without inheriting service environment secrets. No SCP/SFTP subsystem is bundled.
+- Built `localhost/lucoa:ssh` using the required digest-pinned `node:26-alpine` base, Docker image format, and rootless Podman on amd64. The first build rejected a nonexistent `dropbear-ssh-keygen` subpackage; verified Alpine package names and corrected to `dropbear`, which includes `dropbearkey`.
+- Full existing smoke suite passed, including hardened non-root tools, offline Python/uv, no-token/root rejection, Ovis HTTP/WebSocket authentication and I/O, reconnect, persistence, file-based token startup, and graceful shutdown.
+- New disposable `tests/ssh.sh` passed: UID 1000 key login, non-interactive tool PATH, no Ovis token in SSH environment, interactive PTY, `hc connect` JSON-RPC, a core task surviving SSH disconnect, invalid/wrong-key/root/password-only login rejection, stable host key and workspace file after recreation, graceful shutdown, and container exit on SSH service failure. Tests publish only a random loopback port and remove disposable volumes/keys.
+- PTY testing initially failed because the harness provided immediate stdin EOF; keeping stdin open while the interactive command runs passed. No extra runtime privileges were added.
+- Both container CI and GHCR publication workflows now run the SSH test as well; hosted CI has not been executed here. Herdr Desktop graphical onboarding/version compatibility, real provider authentication, SCP/SFTP, Docker runtime, Quadlet runtime/boot, LAN filtering, and arm64 remain unvalidated.
+- No live redeployment, token rotation, firewall change, or Traefik change was performed.
+
 ## Python / uv addition — 2026-11-04
 
 - Added Alpine `python3` (resolved to **3.14.10**) without pip; retained the required digest-pinned Node 26 Alpine base and non-root runtime.

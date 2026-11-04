@@ -18,7 +18,7 @@ The image must use **`node:26-alpine`** as its base. Its default workload is the
 - Run Ovis in the foreground under a signal-safe launch strategy; leave container restart policy to the container engine.
 - Persist Ovis state, agent configuration/authentication, herdr-core state, and workspaces in appropriate user-writable mounts. Persistent files do not preserve live processes across container restarts.
 - Require authentication for network-accessible browser control. Never expose an ungated terminal service; document HTTPS and safe host port binding.
-- Use the existing external **Traefik** HTTPS reverse proxy for primary browser access. The deployment host's LAN IP is **`10.0.0.50`**; publish testing access as `10.0.0.50:7317:7317`, restricted by host/network ingress rules to `10.0.0.0/24` and Traefik as needed. Do not publish on all host interfaces by default or configure firewall rules inside the container.
+- Use the existing external **Traefik** HTTPS reverse proxy for primary browser access. The deployment host's LAN IP is **`10.0.0.50`**. Per the user's updated preference, new deployment examples default to **`0.0.0.0:7317:7317`** and **`0.0.0.0:2222:2222`**; users choose narrower bindings in run commands, Compose, or Quadlet and enforce source restrictions with host/network ingress rules. Do not configure firewall rules inside the container. Port 2222 runs Dropbear as the non-root `node` user with public-key-only authentication; users must provision `~/.ssh/authorized_keys`. Password/root login and forwarding are disabled. SSH host keys persist under `/home/node/.ssh`. This default change does not authorize changing the live deployment's loopback binding or private `.env`.
 - Keep Ovis authentication enabled on the direct LAN path, not just at the proxy. Document that plain HTTP testing does not encrypt tokens or terminal traffic.
 - Use a dedicated, unprivileged user to run the container and its agents. Set an explicit non-root `USER` in the final image.
 - **Do not include rootful packages:** bundled tools and runtime dependencies must not require root privileges, privilege escalation, or root-owned services to operate.
@@ -60,6 +60,16 @@ Do not rename/redeploy them or create replacement volumes without approval.
 - `localhost/lboa:local` still points to the previous image. The old container is retained **stopped** as `lboa-before-python-uv` for rollback; do not start it alongside `lboa` (same volumes/port).
 - Usage and caveats are in README.md; detailed results are in PLAN.md. Python package-registry downloads, native compilation, and arm64 execution remain untested.
 - User reports the existing setup is working; this is not an independent graphical-browser/provider-authentication test by the agent.
+
+### SSH image addition (not deployed)
+
+- Added non-root Dropbear on port 2222 alongside Ovis, supervised with signal forwarding and failure propagation. SSH is enabled by default (`LUCOA_SSH_ENABLED=0` disables it), accepts public keys only, and denies root/password authentication and port forwarding.
+- Host keys and authorized keys persist in `/home/node/.ssh`; an empty key file permits no SSH logins. Optional `LUCOA_SSH_AUTHORIZED_KEYS` imports public-key text (including newline-separated keys), or `LUCOA_SSH_AUTHORIZED_KEYS_FILE` copies a readable runtime public-key file at startup. Both inputs replace `authorized_keys`; nonempty conflicting inputs are rejected. No credentials or host keys are baked into the image.
+- SSH shell setup supplies `/opt/lucoa/bin` and default shared hc XDG paths without forwarding service environment secrets. No SCP/SFTP subsystem is bundled.
+- Built `localhost/lucoa:ssh` with rootless Podman. The full existing smoke suite and disposable `tests/ssh.sh` suite passed: key-only UID 1000 login, PTY, tools on PATH, `hc connect` RPC, disconnect continuity, denied invalid/root/password-only authentication, host-key/data persistence, graceful shutdown, and propagation of SSH service failure.
+- Deployment examples, Compose, and Quadlet now use `ghcr.io/lutvzn/lucoa:latest` by default; Compose accepts `LUCOA_IMAGE`, and local builds remain documented. Registry images must be published from this source before these new features are available there; no publication was performed for this change.
+- Rebuilt `localhost/lucoa:ssh` and reran both smoke suites after adding raw environment key import: multiline key login, preservation without input, conflicting inputs, blank input, and private-key text rejection passed.
+- This image has **not** replaced the live `lboa` service. Herdr Desktop graphical onboarding, Docker runtime, hosted CI, Quadlet boot, arm64, and network ingress filtering remain untested. See README.md for setup and PLAN.md for details.
 
 ### Current access and network boundary
 

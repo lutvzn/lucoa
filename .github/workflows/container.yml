@@ -16,11 +16,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check script syntax
         run: |
-          sh -n build/install-upstream.sh scripts/entrypoint.sh tests/smoke.sh
+          for script in build/install-upstream.sh scripts/entrypoint.sh scripts/ssh-shell.sh tests/smoke.sh tests/ssh.sh; do sh -n "$script"; done
+          node --check scripts/services.mjs
           node --check scripts/healthcheck.mjs
           node --check tests/http.mjs
           node --check tests/soak.mjs
       - name: Build image
         run: docker build -t lucoa:ci .
       - name: Run credential-free smoke tests
-        run: sh tests/smoke.sh lucoa:ci
+        run: |
+          sh tests/smoke.sh lucoa:ci
+          sh tests/ssh.sh lucoa:ci

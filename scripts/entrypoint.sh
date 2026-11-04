@@ -23,6 +23,45 @@ if [ "${1:-}" = bun ] && [ "${2:-}" = /opt/lucoa/ovis/server/index.ts ]; then
         [ -w "$dir" ] || fail "directory is not writable: $dir"
     done
     [ -w /workspace ] || fail '/workspace is not writable; fix mount ownership on the host'
+    case "${LUCOA_SSH_ENABLED:-1}" in
+        0) ;;
+        1)
+            ssh_dir="$HOME/.ssh"
+            mkdir -p "$ssh_dir"
+            [ ! -L "$ssh_dir" ] || fail '.ssh must not be a symlink'
+            [ "$(stat -c %u "$ssh_dir")" = "$(id -u)" ] || fail '.ssh must be owned by the runtime user'
+            chmod 700 "$ssh_dir"
+            for file in authorized_keys dropbear_ed25519_host_key; do
+                [ ! -L "$ssh_dir/$file" ] || fail "SSH file must not be a symlink: $file"
+            done
+            [ -z "${LUCOA_SSH_AUTHORIZED_KEYS:-}" ] || [ -z "${LUCOA_SSH_AUTHORIZED_KEYS_FILE:-}" ] \
+                || fail 'set LUCOA_SSH_AUTHORIZED_KEYS or LUCOA_SSH_AUTHORIZED_KEYS_FILE, not both'
+            if [ -n "${LUCOA_SSH_AUTHORIZED_KEYS:-}" ]; then
+                case "$LUCOA_SSH_AUTHORIZED_KEYS" in
+                    *'PRIVATE KEY'*) fail 'supply SSH public keys only, never private keys' ;;
+                    *[![:space:]]*) ;;
+                    *) fail 'LUCOA_SSH_AUTHORIZED_KEYS must not be blank' ;;
+                esac
+                printf '%s\n' "$LUCOA_SSH_AUTHORIZED_KEYS" > "$ssh_dir/authorized_keys"
+            elif [ -n "${LUCOA_SSH_AUTHORIZED_KEYS_FILE:-}" ]; then
+                [ -r "$LUCOA_SSH_AUTHORIZED_KEYS_FILE" ] || fail 'SSH public-key source is not readable'
+                # Copy only public keys from a separate runtime mount, not secrets in image layers.
+                cp "$LUCOA_SSH_AUTHORIZED_KEYS_FILE" "$ssh_dir/authorized_keys"
+            fi
+            # Provisioning input is not needed by either foreground service.
+            unset LUCOA_SSH_AUTHORIZED_KEYS
+            if [ ! -f "$ssh_dir/authorized_keys" ]; then
+                : > "$ssh_dir/authorized_keys"
+            fi
+            chmod 600 "$ssh_dir/authorized_keys"
+            if [ ! -f "$ssh_dir/dropbear_ed25519_host_key" ]; then
+                dropbearkey -t ed25519 -f "$ssh_dir/dropbear_ed25519_host_key" >/dev/null
+            fi
+            chmod 600 "$ssh_dir/dropbear_ed25519_host_key"
+            exec node /usr/local/lib/lucoa/services.mjs "$@"
+            ;;
+        *) fail 'LUCOA_SSH_ENABLED must be 0 or 1' ;;
+    esac
 fi
 
 exec "$@"
