@@ -61,6 +61,32 @@ Use Podman's `--format docker` to retain the Dockerfile health check (its defaul
 
 The build needs internet access to the container registry, Alpine repositories, npm, GitHub, and `releases.herdr.dev`. It never needs provider credentials. Bun builds the web client during image construction; startup runs the production server directly, not Vite or a frontend build.
 
+## Publish to GitHub Container Registry
+
+In GitHub, open **Actions → Publish container to GHCR → Run workflow** and
+select the branch to build. The workflow builds a **Linux amd64** image, runs
+the credential-free smoke suite, and publishes only if the tests pass.
+
+Images are published as:
+
+- `ghcr.io/lutvzn/lucoa:sha-<full-commit-sha>` for every successful run.
+- `ghcr.io/lutvzn/lucoa:latest` when run against the repository's default branch.
+
+The workflow uses the automatic `GITHUB_TOKEN` with `packages: write`; no
+personal access token or registry secret needs to be configured. Repository or
+organization policy must allow package publishing. A newly published GHCR
+package may be private; manage its visibility and Actions access in the package
+settings. Pulling a private package requires registry authentication.
+
+```sh
+docker pull ghcr.io/lutvzn/lucoa:latest
+```
+
+Publishing does not deploy or restart any running container. The Compose setup
+continues to build locally; using a published image is a separate deployment
+choice. The manual workflow must exist on the default branch before GitHub
+shows its **Run workflow** button.
+
 ## Python development with uv
 
 Python 3, `uv`, and `uvx` are on PATH for Ovis agents and interactive shells.
