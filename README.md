@@ -81,8 +81,17 @@ startup does not repair permissions. The Compose example uses `OVIS_TOKEN`.
 
 ## Choose a deployment method
 
-Choose **one** method. Every example below binds to **`127.0.0.1:7317`** and
-uses init, dropped capabilities, and `no-new-privileges`.
+Choose **one** method. Every example below publishes these localhost-only ports
+and uses init, dropped capabilities, and `no-new-privileges`:
+
+| Host binding | Container port | Purpose |
+| --- | --- | --- |
+| `127.0.0.1:7317` | `7317` | Ovis browser UI |
+| `127.0.0.1:2222` | `2222` | Reserved for SSH; no SSH server is implemented yet |
+
+**Publishing port 2222 does not enable SSH.** The current image has no SSH server
+listening there, so Herdr Desktop cannot connect to it yet. Keep this binding
+loopback-only, independently of any browser LAN binding.
 
 | Method | Best for | Restart management |
 | --- | --- | --- |
@@ -104,7 +113,8 @@ docker build -t lucoa:local .
 docker run -d --name lucoa --init --restart=unless-stopped \
   --cap-drop=ALL --security-opt=no-new-privileges \
   --stop-timeout=20 \
-  --env-file .env -p 127.0.0.1:7317:7317 \
+  --env-file .env \
+  -p 127.0.0.1:7317:7317 -p 127.0.0.1:2222:2222 \
   -v lucoa-home:/home/node -v lucoa-workspace:/workspace \
   lucoa:local
 ```
@@ -162,7 +172,8 @@ podman build --format docker -t localhost/lucoa:local .
 podman run -d --name lucoa --init --restart=unless-stopped \
   --cap-drop=ALL --security-opt=no-new-privileges \
   --stop-timeout=20 \
-  --env-file .env -p 127.0.0.1:7317:7317 \
+  --env-file .env \
+  -p 127.0.0.1:7317:7317 -p 127.0.0.1:2222:2222 \
   -v lucoa-home:/home/node -v lucoa-workspace:/workspace \
   localhost/lucoa:local
 ```
@@ -255,8 +266,11 @@ ssh -N -L 7317:127.0.0.1:7317 lutvzn@10.0.0.50
 Then open the same localhost URL on that device. Adjust the host user/address
 if deploying elsewhere.
 
-**This is a tunnel to Ovis, not SSH into the container.** An SSH endpoint for
-Herdr Desktop is not implemented yet.
+**This is a tunnel to Ovis, not SSH into the container.** Port `2222` is published
+for future container SSH support, but an SSH server and key authentication for
+Herdr Desktop are not implemented yet. The port mapping alone is not a working
+SSH endpoint. Applying new port mappings requires container recreation; these
+examples do not change the existing live deployment.
 
 ## Use agents and Python
 

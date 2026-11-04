@@ -14,6 +14,9 @@ services:
       # Interface binding is NOT a source-subnet firewall. See README.md.
       # Honor the old setting so existing loopback-only .env files stay local.
       - "${LUCOA_BIND_IP:-${LBOA_BIND_IP:-10.0.0.50}}:7317:7317"
+      # Reserved for container SSH; an SSH server is not implemented yet.
+      # Keep SSH loopback-only, independently of the browser binding.
+      - "127.0.0.1:2222:2222"
     environment:
       OVIS_RUNTIME: herdr-core
       OVIS_TOKEN: "${OVIS_TOKEN:?Set OVIS_TOKEN in a private .env file or the shell}"

@@ -9,6 +9,8 @@ Pull=never
 ContainerName=lucoa
 EnvironmentFile=%h/.config/lucoa/lucoa.env
 PublishPort=127.0.0.1:7317:7317
+# Reserved for container SSH; an SSH server is not implemented yet.
+PublishPort=127.0.0.1:2222:2222
 Volume=lucoa-home:/home/node
 Volume=lucoa-workspace:/workspace
 RunInit=true
