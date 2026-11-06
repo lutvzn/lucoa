@@ -551,6 +551,71 @@ development headers, and pip are not bundled.
 Recreate virtual environments after an incompatible system Python update, and
 do not reuse environments created on incompatible hosts.
 
+### Build container images with podman-remote
+
+The image includes the `podman-remote` client (also available as `podman`), so
+agents can build and test images **on the host's Podman** without running a
+container engine or root inside lucoa. Nothing happens until you mount a host
+Podman API socket. Without one, `podman` commands fail with a connection error.
+
+> **Security:** the socket gives everything in lucoa (agents, SSH users, browser
+> terminals) full control of that host account's Podman. That includes stopping
+> or inspecting its other containers, reading their environment (for example an
+> `OVIS_TOKEN` passed with `-e`), and bind-mounting any host path the account can
+> read. Use a **dedicated host account** whose Podman holds nothing else, prefer
+> its **rootless** socket, and never mount a rootful `/run/podman/podman.sock`
+> (that is equivalent to host root). With a socket mounted, prefer
+> `OVIS_TOKEN_FILE` over `-e OVIS_TOKEN`. This is opt-in and not part of the
+> default deployment examples.
+
+1. On the host, as the account that runs lucoa, enable its rootless API socket:
+
+   ```sh
+   systemctl --user enable --now podman.socket
+   ls -l "$XDG_RUNTIME_DIR/podman/podman.sock"
+   ```
+
+2. Add these options to the `podman run` command. `keep-id` maps the host
+   account, which owns the socket, to the container's `node` user (UID 1000).
+   `label=disable` allows the socket connection on SELinux hosts:
+
+   ```sh
+     --userns=keep-id:uid=1000,gid=1000 \
+     --security-opt label=disable \
+     -v "$XDG_RUNTIME_DIR/podman/podman.sock:/run/podman/podman.sock" \
+   ```
+
+   For Quadlet, add to `[Container]`:
+
+   ```ini
+   UserNS=keep-id:uid=1000,gid=1000
+   SecurityLabelDisable=true
+   Volume=%t/podman/podman.sock:/run/podman/podman.sock
+   ```
+
+   `keep-id` changes how container UIDs map to the host, so start it with
+   fresh volumes or check ownership of existing ones first. The entrypoint
+   reports volumes that UID 1000 does not own.
+
+3. Inside lucoa (browser terminal or SSH):
+
+   ```sh
+   podman info --format '{{.Host.Security.Rootless}}'   # expect: true
+   podman build -t localhost/my-test .
+   podman run --rm localhost/my-test
+   ```
+
+Builds and containers run on the host, so images, volumes, and bind-mount paths
+refer to **host** storage and paths, not lucoa's filesystem. The build context
+is uploaded from lucoa, so `podman build .` in `/workspace` works as expected.
+`CONTAINER_HOST` defaults to `unix:///run/podman/podman.sock`; SSH shells use
+that default. The client is Debian's 5.4 series; keep the host on a compatible
+Podman 5.x. `podman-remote` cannot talk to a Docker daemon.
+
+Docker hosts are not supported for this feature. Running a nested engine inside
+lucoa instead would need privileged mode or extra capabilities, which the
+project avoids.
+
 ## Persistent storage
 
 | Container path | Contents | Storage |
@@ -715,6 +780,14 @@ podman run --rm -it ghcr.io/lutvzn/lucoa:latest /bin/bash
 docker compose run --rm lucoa hc --version
 ```
 
+For tasks with no rootless alternative, a command override may run as root
+with `--user 0` (the entrypoint prints a warning). Prefer the default `node`
+user. The Ovis server still refuses to start as root. The image has no `sudo`
+or setuid helpers, so root is chosen when the container starts, never gained
+from inside it. Root in a rootless-Podman container is your host account, not
+host root. Avoid running as root against persistent volumes, because files it
+creates there may not be writable by `node` afterwards.
+
 Direct disposable shells above do not mount persistent data. Use `exec` on the
 running service when you need its existing workspace and credentials.
 
@@ -797,6 +870,7 @@ API rate limit.
 | uv / uvx (glibc) | 0.13.7 |
 | SFTP | Debian `openssh-sftp-server` (`/usr/lib/sftp-server`), no OpenSSH daemon |
 | Extra CLI tools | Debian `openssh-client`, `jq`, `less`, `procps` |
+| podman-remote (`podman`) | Debian `podman-remote` (5.4 series), client only |
 
 Upstream archives are SHA-256 checked against [`build/versions.env`](build/versions.env).
 Agent dependencies use [`build/agents/package-lock.json`](build/agents/package-lock.json);
@@ -816,7 +890,7 @@ wrappers. Only **linux/amd64** is built, and the scripts refuse other runners.
 | `ci/install-tools.sh` | Checksum-pinned ShellCheck, hadolint, Trivy, cosign ([`ci/tools.env`](ci/tools.env)) into `.ci/bin` |
 | `ci/lint.sh` | Shell/JS/Python syntax, ShellCheck, hadolint ([`.hadolint.yaml`](.hadolint.yaml)) |
 | `ci/build.sh IMAGE` | Docker or Podman build with OCI labels |
-| `ci/test.sh IMAGE` | Both disposable suites (smoke + SSH/SFTP) |
+| `ci/test.sh IMAGE` | Disposable suites: smoke, SSH/SFTP, and podman-remote on Podman runners |
 | `ci/scan.sh IMAGE` | Trivy scan and CycloneDX SBOM in `.ci/out/`; fails on fixable CRITICAL issues |
 | `ci/publish.sh IMAGE` | Tag, push, and optionally sign/attest |
 
@@ -912,6 +986,9 @@ CONTAINER_ENGINE=podman sh tests/smoke.sh localhost/lucoa:local
 # SSH/SFTP integration (requires host ssh, ssh-keygen, and sftp):
 CONTAINER_ENGINE=podman sh tests/ssh.sh localhost/lucoa:local
 # Docker: sh tests/ssh.sh lucoa:local
+
+# podman-remote via a temporary host API service (rootless Podman host only):
+sh tests/podman-remote.sh localhost/lucoa:local
 
 # Optional bounded readiness soak (seconds, maximum 86400):
 LUCOA_SOAK_SECONDS=60 CONTAINER_ENGINE=podman sh tests/smoke.sh localhost/lucoa:local

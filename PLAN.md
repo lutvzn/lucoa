@@ -18,6 +18,13 @@ The live `lboa` deployment, volumes, credentials, and rollback container were no
 changed. Earlier smoke/build results do not validate the renamed image; rebuild
 and rerun disposable smoke tests before deployment.
 
+## podman-remote and rootless preference — 2026-11-06 (not built)
+
+- **Policy:** the user relaxed the strict no-root rule to "prefer rootless solutions" (AGENTS.md). The default user stays `node`. With user approval, the entrypoint allows UID 0 for command overrides (warning on stderr) and still refuses to run the Ovis server as root. The smoke suite checks both. The no-sudo/su and no-setuid checks for the default image are kept.
+- **podman-remote:** Debian `podman-remote` 5.4.2 (client only) is in the image, with `podman` → `podman-remote` in `/opt/lucoa/bin`. `CONTAINER_HOST` points to `/run/podman/podman.sock` in the service and SSH environments. A host socket must be mounted explicitly. Rootless hosts need `keep-id:uid=1000,gid=1000`, and SELinux hosts need `label=disable`. The socket grants full control of that host account's Podman, as documented in README.md.
+- **Test:** `tests/podman-remote.sh` runs a temporary `podman system service` on a private socket. As UID 1000 it checks that `podman info` reports a rootless host, then builds an image `FROM` the image under test, runs it, and removes it. It runs only on Podman runners via `ci/test.sh`; GitHub's Docker runner skips it.
+- **Not verified:** not built or run here (no engine), so host Podman version compatibility is unknown. Live `lboa` is unchanged.
+
 ## CI, pin freshness, SFTP/tools — 2026-11-06 (not built)
 
 - **CI shared by GitHub and Forgejo:** logic moved into `ci/*.sh` (install pinned tools, lint, build, test, scan, publish); `.github/workflows` and `.forgejo/workflows` are thin wrappers. amd64 only; scripts refuse non-x86_64 runners. Forgejo jobs target a `lucoa-host:host` runner label and do not trigger on pull requests (host runners are unisolated). Actions are pinned by SHA (`actions/checkout` v7.0.1 is the same commit on GitHub and `data.forgejo.org`; `upload-artifact` v7.0.2 on GitHub only).

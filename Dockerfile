@@ -10,13 +10,15 @@ ARG EXTRA_APT_PACKAGES=""
 # dropbear-bin ships the server binaries without the root-run init service.
 # Debian's Dropbear runs /usr/lib/sftp-server from openssh-sftp-server for
 # SFTP (and modern scp); no OpenSSH server or daemon is installed.
+# podman-remote is only a client: it builds/runs images through a host Podman
+# API socket that the operator chooses to mount (see README); no daemon here.
 # Remove su and strip every setuid/setgid bit from the base image.
 # hadolint ignore=SC2086
 RUN case "$EXTRA_APT_PACKAGES" in *[!a-z0-9.+:\ -]*) echo 'invalid EXTRA_APT_PACKAGES' >&2; exit 1 ;; esac \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         bash ca-certificates curl git ripgrep python3 dropbear-bin \
-        openssh-client openssh-sftp-server jq less procps \
+        openssh-client openssh-sftp-server jq less procps podman-remote \
         $EXTRA_APT_PACKAGES \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb \
     && rm -f /bin/su /usr/bin/su \
@@ -60,10 +62,12 @@ COPY --from=build --chown=node:node /opt/lucoa /opt/lucoa
 COPY --chown=node:node build/versions.env /opt/lucoa/versions.env
 COPY scripts/entrypoint.sh scripts/healthcheck.mjs scripts/services.mjs scripts/ssh-shell.sh /usr/local/lib/lucoa/
 RUN chmod 755 /usr/local/lib/lucoa/entrypoint.sh /usr/local/lib/lucoa/ssh-shell.sh \
+    && ln -s /usr/bin/podman-remote /opt/lucoa/bin/podman \
     && sed -i 's|^node:\(.*\):[^:]*$|node:\1:/usr/local/lib/lucoa/ssh-shell.sh|' /etc/passwd \
     && printf '%s\n' /usr/local/lib/lucoa/ssh-shell.sh >> /etc/shells
 
 ENV LUCOA_SSH_ENABLED=1 \
+    CONTAINER_HOST=unix:///run/podman/podman.sock \
     OVIS_RUNTIME=herdr-core \
     OVIS_HC_BIN=/opt/lucoa/bin/herdr-core \
     OVIS_STATE_DIR=/home/node/.config/ovis \

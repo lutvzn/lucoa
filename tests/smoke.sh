@@ -25,7 +25,9 @@ case "$configured_user" in ''|root|0|0:*) echo 'FAIL: image default user is root
     test "$(id -u)" = 1000
     test "$(node -p "process.versions.node.split(\".\")[0]")" = 26
     test -f /etc/debian_version
-    for tool in bun hc herdr-core claude pi git rg bash python3 uv uvx dropbear dropbearkey jq less ssh ps; do command -v "$tool"; done
+    for tool in bun hc herdr-core claude pi git rg bash python3 uv uvx dropbear dropbearkey jq less ssh ps podman podman-remote; do command -v "$tool"; done
+    test "$(readlink -f "$(command -v podman)")" = /usr/bin/podman-remote
+    podman --version
     test -x /usr/lib/sftp-server
     printf "{\"ok\":true}" | jq -e .ok >/dev/null
     bun --version; hc --version; claude --version; pi --version
@@ -42,10 +44,14 @@ if "$engine" run --rm "$image" >"$tmp/no-token.log" 2>&1; then
     echo 'FAIL: server started without a token' >&2; exit 1
 fi
 grep -q 'set a nonempty OVIS_TOKEN' "$tmp/no-token.log"
-if "$engine" run --rm --user 0 "$image" /bin/true >"$tmp/root.log" 2>&1; then
-    echo 'FAIL: root execution was accepted' >&2; exit 1
+# Root is opt-in for command overrides only (with a warning); never for Ovis.
+"$engine" run --rm --user 0 "$image" id -u >"$tmp/root-override.log" 2>&1
+grep -qx 0 "$tmp/root-override.log"
+grep -q 'warning: running a command override as root' "$tmp/root-override.log"
+if "$engine" run --rm --user 0 "$image" >"$tmp/root.log" 2>&1; then
+    echo 'FAIL: Ovis server started as root' >&2; exit 1
 fi
-grep -q 'refusing to run as root' "$tmp/root.log"
+grep -q 'refusing to run the Ovis server as root' "$tmp/root.log"
 
 # Pass the test token by environment, not expanded command arguments or log output.
 OVIS_TOKEN=$("$engine" run --rm "$image" node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("hex"))')

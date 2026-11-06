@@ -1,11 +1,13 @@
 #!/bin/sh
 set -eu
 fail() { printf 'lucoa: %s\n' "$1" >&2; exit 1; }
-[ "$(id -u)" -ne 0 ] || fail 'refusing to run as root'
 umask 077
 
-# Command overrides (for example /bin/bash) do not require a web token.
+# Command overrides (for example /bin/bash) do not require a web token. Root is
+# allowed for explicit overrides (--user 0 maintenance shells), with a warning.
+# The default Ovis + SSH workload always runs unprivileged.
 if [ "${1:-}" = bun ] && [ "${2:-}" = /opt/lucoa/ovis/server/index.ts ]; then
+    [ "$(id -u)" -ne 0 ] || fail 'refusing to run the Ovis server as root; use the default node user'
     [ "${OVIS_RUNTIME:-}" = herdr-core ] || fail 'OVIS_RUNTIME must be herdr-core'
     if [ -n "${OVIS_TOKEN_FILE:-}" ]; then
         [ -z "${OVIS_TOKEN:-}" ] || fail 'set OVIS_TOKEN or OVIS_TOKEN_FILE, not both'
@@ -64,4 +66,7 @@ if [ "${1:-}" = bun ] && [ "${2:-}" = /opt/lucoa/ovis/server/index.ts ]; then
     esac
 fi
 
+if [ "$(id -u)" -eq 0 ]; then
+    printf '%s\n' 'lucoa: warning: running a command override as root; prefer the default node user' >&2
+fi
 exec "$@"

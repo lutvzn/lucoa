@@ -20,11 +20,12 @@ The image must use **`node:26-trixie-slim`** (Debian 13, glibc) as its base, swi
 - Require authentication for network-accessible browser control. Never expose an ungated terminal service; document HTTPS and safe host port binding.
 - Use the existing external **Traefik** HTTPS reverse proxy for primary browser access. The deployment host's LAN IP is **`10.0.0.50`**. Per the user's updated preference, new deployment examples default to **`0.0.0.0:7317:7317`** and **`0.0.0.0:2222:2222`**; users choose narrower bindings in run commands, Compose, or Quadlet and enforce source restrictions with host/network ingress rules. Do not configure firewall rules inside the container. Port 2222 runs Dropbear as the non-root `node` user with public-key-only authentication; users must provision `~/.ssh/authorized_keys`. Password/root login and forwarding are disabled. SSH host keys persist under `/home/node/.ssh`. This default change does not authorize changing the live deployment's loopback binding or private `.env`.
 - Keep Ovis authentication enabled on the direct LAN path, not just at the proxy. Document that plain HTTP testing does not encrypt tokens or terminal traffic.
-- Use a dedicated, unprivileged user to run the container and its agents. Set an explicit non-root `USER` in the final image.
-- **Do not include rootful packages:** bundled tools and runtime dependencies must not require root privileges, privilege escalation, or root-owned services to operate.
+- **Prefer rootless solutions** (relaxed from a strict no-root rule at the user's request on 2026-11-06). The default workload still runs as the dedicated unprivileged `node` user, and the final image keeps an explicit non-root `USER`. Choose tools, packages, and designs that work unprivileged whenever a rootless option exists.
+- Root inside the container is no longer forbidden outright. Use it only when a task has no reasonable rootless alternative, keep it opt-in rather than the default workload, and document why. Never require privileged container mode, root-owned services, or added capabilities for normal operation.
 - Install agent packages and their writable state in locations accessible to the non-root user. Do not rely on root's home directory or root-only package locations.
-- Do not include `sudo`, `doas`, or other privilege-escalation utilities, and do not require privileged container mode.
-- Any root access needed during image construction must be limited to build-time setup; it must not be required at runtime.
+- Avoid privilege-escalation utilities (`sudo`, `doas`, setuid helpers) by default. Adding one needs a documented reason and the user's agreement.
+- Prefer limiting root during image construction to build-time setup.
+- Container builds from inside lucoa use the bundled **podman-remote** client against an operator-mounted host Podman API socket (prefer a rootless host service). That socket grants full control of the host account's Podman, so it is opt-in, documented, and never mounted into the live deployment without approval.
 - Ensure the runtime user's home, workspace, caches, and configuration directories are writable by that user.
 - Never bake credentials, API keys, tokens, or private configuration into image layers. Supply secrets at runtime.
 
@@ -84,6 +85,13 @@ Do not rename/redeploy them or create replacement volumes without approval.
 - `ci/bump-versions.mjs` checks/rewrites pins with checksums (14-day minimum age, no downgrades); the weekly freshness workflow only reports. Available bumps found on 2026-11-06 were **not applied**.
 - The image adds `openssh-client`, `openssh-sftp-server` (SFTP/scp over the existing Dropbear port), `jq`, `less`, `procps`, and an `EXTRA_APT_PACKAGES` build argument. README documents backup/restore via `tar` streams.
 - Lint, ShellCheck, hadolint, and YAML parsing passed locally. **No image build, smoke/SSH run, scan, or workflow execution has happened**; see PLAN.md.
+
+### podman-remote and rootless-preference change (not built)
+
+- Added Debian `podman-remote` (5.4.2 in trixie; client only, no daemon), with a `podman` symlink in `/opt/lucoa/bin` and `CONTAINER_HOST=unix:///run/podman/podman.sock` (also set for SSH shells). It works only when the operator mounts a host Podman socket. Rootless hosts need `--userns=keep-id:uid=1000,gid=1000`, and SELinux hosts need `label=disable`; see README.
+- `tests/podman-remote.sh` starts a temporary host API service and checks build/run/remove through it as UID 1000. `ci/test.sh` runs it only on Podman runners.
+- The requirements above now prefer rootless solutions rather than forbidding root. With user approval, the entrypoint now allows UID 0 for **command overrides** (with a stderr warning) but still refuses to start the Ovis server as root. The smoke suite asserts both. The default image still ships no sudo/doas/su or setuid files, and the smoke suite still checks that.
+- Not built or run, and live `lboa` is unchanged. Client/server compatibility with the host's Podman version is unverified.
 
 ### Current access and network boundary
 
