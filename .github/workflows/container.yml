@@ -1,5 +1,6 @@
 name: Container
 
+# Logic lives in ci/*.sh so GitHub and Forgejo (.forgejo/workflows) stay in sync.
 on:
   push:
   pull_request:
@@ -8,22 +9,36 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  smoke-amd64:
+  amd64:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    env:
+      LUCOA_SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Check script syntax
-        run: |
-          for script in build/install-upstream.sh scripts/entrypoint.sh scripts/ssh-shell.sh tests/smoke.sh tests/ssh.sh; do sh -n "$script"; done
-          node --check scripts/services.mjs
-          node --check scripts/healthcheck.mjs
-          node --check tests/http.mjs
-          node --check tests/soak.mjs
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned CI tools
+        run: sh ci/install-tools.sh shellcheck hadolint trivy
+      - name: Lint
+        run: sh ci/lint.sh
       - name: Build image
-        run: docker build -t lucoa:ci .
-      - name: Run credential-free smoke tests
-        run: |
-          sh tests/smoke.sh lucoa:ci
-          sh tests/ssh.sh lucoa:ci
+        run: sh ci/build.sh lucoa:ci
+      - name: Smoke and SSH tests
+        run: sh ci/test.sh lucoa:ci
+      - name: Vulnerability scan and SBOM
+        run: sh ci/scan.sh lucoa:ci
+      - name: Upload SBOM and scan report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lucoa-sbom-${{ github.sha }}
+          path: |
+            .ci/out/sbom.cdx.json
+            .ci/out/vulnerabilities.txt
+          if-no-files-found: ignore

@@ -1,0 +1,10 @@
+# hadolint configuration for ci/lint.sh.
+failure-threshold: warning
+ignored:
+  # Debian package versions are not pinned: the base image is digest-pinned and
+  # trixie only ships security/stable updates, which the weekly fresh rebuild
+  # (freshness workflow) is meant to pick up. Pinning exact versions breaks
+  # builds whenever Debian supersedes a package.
+  - DL3008
+  # The base image defines node as UID/GID 1000; tests assert the numeric IDs.
+  - DL3066

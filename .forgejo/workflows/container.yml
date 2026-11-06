@@ -1,0 +1,42 @@
+name: Container
+
+# Forgejo Actions twin of .github/workflows/container.yml; logic is in ci/*.sh.
+# Needs an x86_64 runner registered with the label `lucoa-host:host` (jobs run
+# directly on the host) that has docker or rootless podman, git, curl, node,
+# python3, and OpenSSH clients (ssh, ssh-keygen, sftp). See README.md.
+#
+# No pull_request trigger: a host runner has no isolation, so code from
+# unreviewed pull requests must not run on it. Pushes require repo write access.
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: container-${{ forgejo.ref }}
+  cancel-in-progress: true
+
+jobs:
+  amd64:
+    runs-on: lucoa-host
+    timeout-minutes: 45
+    env:
+      LUCOA_SOURCE_URL: ${{ forgejo.server_url }}/${{ forgejo.repository }}
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned CI tools
+        run: sh ci/install-tools.sh shellcheck hadolint trivy
+      - name: Lint
+        run: sh ci/lint.sh
+      - name: Build image
+        run: sh ci/build.sh "lucoa:ci-${{ forgejo.run_id }}"
+      - name: Smoke and SSH tests
+        run: sh ci/test.sh "lucoa:ci-${{ forgejo.run_id }}"
+      - name: Vulnerability scan and SBOM
+        run: sh ci/scan.sh "lucoa:ci-${{ forgejo.run_id }}"
+      - name: Remove CI image from the host
+        if: always()
+        run: |
+          . ci/lib.sh; detect_engine
+          "$CONTAINER_ENGINE" image rm -f "lucoa:ci-${{ forgejo.run_id }}" >/dev/null 2>&1 || true

@@ -2,12 +2,22 @@
 # Multi-architecture node:26-trixie-slim (Debian 13) index, reviewed 2026-11-04.
 FROM node:26-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS runtime-base
 
+# Optional extra Debian packages (space-separated), e.g. "build-essential".
+# They must work unprivileged; setuid bits are stripped below regardless.
+ARG EXTRA_APT_PACKAGES=""
+
 # Root is used only for image construction. No privilege-escalation packages.
 # dropbear-bin ships the server binaries without the root-run init service.
+# Debian's Dropbear runs /usr/lib/sftp-server from openssh-sftp-server for
+# SFTP (and modern scp); no OpenSSH server or daemon is installed.
 # Remove su and strip every setuid/setgid bit from the base image.
-RUN apt-get update \
+# hadolint ignore=SC2086
+RUN case "$EXTRA_APT_PACKAGES" in *[!a-z0-9.+:\ -]*) echo 'invalid EXTRA_APT_PACKAGES' >&2; exit 1 ;; esac \
+    && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         bash ca-certificates curl git ripgrep python3 dropbear-bin \
+        openssh-client openssh-sftp-server jq less procps \
+        $EXTRA_APT_PACKAGES \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb \
     && rm -f /bin/su /usr/bin/su \
     && find / -xdev -type f -perm /6000 -exec chmod a-s {} + \

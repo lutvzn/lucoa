@@ -9,10 +9,11 @@ image=${1:-lucoa:local}
 name="lucoa-smoke-$$"
 home="${name}-home"
 workspace="${name}-workspace"
+restored="${name}-restored"
 tmp=$(mktemp -d)
 cleanup() {
     "$engine" rm -f "$name" >/dev/null 2>&1 || true
-    "$engine" volume rm "$home" "$workspace" >/dev/null 2>&1 || true
+    "$engine" volume rm "$home" "$workspace" "$restored" >/dev/null 2>&1 || true
     rm -rf "$tmp"
 }
 trap cleanup EXIT HUP INT TERM
@@ -24,7 +25,9 @@ case "$configured_user" in ''|root|0|0:*) echo 'FAIL: image default user is root
     test "$(id -u)" = 1000
     test "$(node -p "process.versions.node.split(\".\")[0]")" = 26
     test -f /etc/debian_version
-    for tool in bun hc herdr-core claude pi git rg bash python3 uv uvx dropbear dropbearkey; do command -v "$tool"; done
+    for tool in bun hc herdr-core claude pi git rg bash python3 uv uvx dropbear dropbearkey jq less ssh ps; do command -v "$tool"; done
+    test -x /usr/lib/sftp-server
+    printf "{\"ok\":true}" | jq -e .ok >/dev/null
     bun --version; hc --version; claude --version; pi --version
     python3 --version; uv --version; uvx --version
     ! command -v sudo
@@ -97,5 +100,17 @@ ready
 "$engine" stop -t 20 "$name" >/dev/null
 exit_code=$("$engine" inspect "$name" --format '{{.State.ExitCode}}')
 [ "$exit_code" = 0 ] || { echo "FAIL: nonzero shutdown: $exit_code" >&2; exit 1; }
-echo 'PASS: non-root tools, auth-required startup, hardened runtime, HTTP/WebSocket workflow, token file, persistent mounts, graceful shutdown'
+# Documented backup/restore: stream a stopped volume through tar via stdout/stdin.
+"$engine" run --rm --cap-drop=ALL --security-opt=no-new-privileges \
+    -v "$home:/home/node:ro" "$image" tar -C /home/node -cf - . > "$tmp/home.tar"
+tar -tf "$tmp/home.tar" | grep -qx './.lucoa-smoke'
+"$engine" volume create "$restored" >/dev/null
+"$engine" run --rm -i --cap-drop=ALL --security-opt=no-new-privileges \
+    -v "$restored:/home/node" "$image" tar -C /home/node -xf - < "$tmp/home.tar"
+"$engine" run --rm --cap-drop=ALL --security-opt=no-new-privileges \
+    -v "$restored:/home/node:ro" "$image" sh -eu -c '
+    test "$(cat "$HOME/.lucoa-smoke")" = home-persist
+    test "$(stat -c %u:%a "$HOME/.lucoa-test-token")" = 1000:600
+'
+echo 'PASS: non-root tools, auth-required startup, hardened runtime, HTTP/WebSocket workflow, token file, persistent mounts, graceful shutdown, backup/restore, extra tools'
 echo 'NOT TESTED: real provider credentials, graphical browser UI, Traefik, LAN firewall rules, long soak, arm64'

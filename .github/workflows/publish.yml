@@ -1,6 +1,11 @@
 name: Publish container to GHCR
 
+# vX.Y.Z tags publish X.Y.Z, X.Y, sha-<commit>, and latest (pre-releases such as
+# v1.0.0-rc.1 skip X.Y and latest). Manual runs publish sha-<commit>, plus
+# latest only when selected. Optional cosign signing via COSIGN_PRIVATE_KEY.
 on:
+  push:
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag_latest:
@@ -14,57 +19,49 @@ permissions:
 
 # Serialize publishing so concurrent runs do not race to update latest.
 concurrency:
-  group: publish-ghcr
+  group: publish-registry
   cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
+    env:
+      LUCOA_SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set image name
-        id: image
-        env:
-          REPOSITORY: ${{ github.repository }}
-        run: echo "name=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
-      - name: Build image
-        env:
-          IMAGE: ${{ steps.image.outputs.name }}
-        run: |
-          docker build --platform linux/amd64 \
-            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
-            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            -t "${IMAGE}:sha-${GITHUB_SHA}" .
-
-      - name: Run credential-free smoke tests
-        env:
-          IMAGE: ${{ steps.image.outputs.name }}
-        run: |
-          sh tests/smoke.sh "${IMAGE}:sha-${GITHUB_SHA}"
-          sh tests/ssh.sh "${IMAGE}:sha-${GITHUB_SHA}"
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish commit tag
+          persist-credentials: false
+      - name: Install pinned CI tools
+        run: sh ci/install-tools.sh shellcheck hadolint trivy cosign
+      - name: Lint
+        run: sh ci/lint.sh
+      - name: Build image
+        run: sh ci/build.sh lucoa:publish
+      - name: Smoke and SSH tests
+        run: sh ci/test.sh lucoa:publish
+      - name: Vulnerability scan and SBOM
+        run: sh ci/scan.sh lucoa:publish
+      - name: Push (and sign) image
         env:
-          IMAGE: ${{ steps.image.outputs.name }}
-        run: docker push "${IMAGE}:sha-${GITHUB_SHA}"
-
-      - name: Publish latest when selected
-        if: inputs.tag_latest
-        env:
-          IMAGE: ${{ steps.image.outputs.name }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          LUCOA_TAG_LATEST: ${{ github.event_name == 'workflow_dispatch' && (inputs.tag_latest && 'true' || 'false') || 'auto' }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
         run: |
-          docker tag "${IMAGE}:sha-${GITHUB_SHA}" "${IMAGE}:latest"
-          docker push "${IMAGE}:latest"
+          LUCOA_IMAGE_NAME=$(printf 'ghcr.io/%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+          export LUCOA_IMAGE_NAME
+          sh ci/publish.sh lucoa:publish
+      - name: Upload SBOM and scan report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lucoa-sbom-${{ github.sha }}
+          path: |
+            .ci/out/sbom.cdx.json
+            .ci/out/vulnerabilities.txt
+          if-no-files-found: ignore

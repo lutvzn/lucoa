@@ -1,0 +1,39 @@
+name: Weekly freshness
+
+# Forgejo Actions twin of .github/workflows/freshness.yml. Reports newer pins
+# (changes nothing) and rebuilds from scratch to surface Debian security
+# updates and new CVEs. Schedules run only from the default branch.
+on:
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+
+jobs:
+  freshness:
+    runs-on: lucoa-host
+    timeout-minutes: 60
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Report available pin updates
+        # Optional LUCOA_GITHUB_API_TOKEN secret: a GitHub token for api.github.com
+        # rate limits. Never the Forgejo token.
+        env:
+          LUCOA_GITHUB_API_TOKEN: ${{ secrets.LUCOA_GITHUB_API_TOKEN }}
+        run: node ci/bump-versions.mjs
+      - name: Install pinned CI tools
+        run: sh ci/install-tools.sh trivy
+      - name: Fresh build (pull base, no cache)
+        env:
+          LUCOA_BUILD_FRESH: '1'
+        run: sh ci/build.sh "lucoa:fresh-${{ forgejo.run_id }}"
+      - name: Smoke and SSH tests
+        run: sh ci/test.sh "lucoa:fresh-${{ forgejo.run_id }}"
+      - name: Vulnerability scan
+        run: sh ci/scan.sh "lucoa:fresh-${{ forgejo.run_id }}"
+      - name: Remove CI image from the host
+        if: always()
+        run: |
+          . ci/lib.sh; detect_engine
+          "$CONTAINER_ENGINE" image rm -f "lucoa:fresh-${{ forgejo.run_id }}" >/dev/null 2>&1 || true

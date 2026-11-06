@@ -34,7 +34,7 @@ Browser → Ovis → herdr-core → Claude Code / pi
 - [Networking and HTTPS](#networking-and-https)
 - [Maintenance](#maintenance)
 - [Versions and builds](#versions-and-builds)
-- [Publish to GHCR](#publish-to-ghcr)
+- [CI and publishing (GitHub and Forgejo)](#ci-and-publishing-github-and-forgejo)
 - [Validation](#validation)
 - [Existing LBoA deployment](#existing-lboa-deployment)
 
@@ -51,7 +51,7 @@ Use this repository for the supplied Compose/Quadlet files.
 
 **Use an image published from this SSH-capable source.** Local code changes do
 not publish a new GHCR image, and an older `latest` may lack these SSH options.
-See [Publish to GHCR](#publish-to-ghcr). For reproducible deployments, replace
+See [CI and publishing](#ci-and-publishing-github-and-forgejo). For reproducible deployments, replace
 `latest` with a published `sha-<full-commit-sha>` tag or image digest.
 
 **Linux amd64 is the validated target.** The build script supports selecting
@@ -478,6 +478,20 @@ The SSH and `hc connect` transport is tested; graphical Herdr Desktop onboarding
 and compatibility with your desktop/core versions still need validation.
 Do not accept an unexpected core upgrade without reviewing the image's pins.
 
+### Copy files with SFTP or scp
+
+The SSH port also serves SFTP (Debian's `sftp-server`, run by Dropbear as
+`node`). Sessions start in `/workspace`; modern `scp` uses SFTP too:
+
+```sh
+sftp lucoa
+scp ./notes.md lucoa:/workspace/
+scp lucoa:/workspace/report.txt .
+```
+
+The same key-only rules apply. Files are written as UID 1000 with the
+container's private umask (`0600` files, `0700` directories).
+
 ### Disable SSH
 
 Set `LUCOA_SSH_ENABLED=0` in the direct-run/Compose environment file, or add
@@ -558,6 +572,40 @@ persisted process state.
 **Persistence saves files, not live processes.** Closing the browser leaves
 agents running. Stopping or recreating the container ends its live processes;
 volumes do not guarantee resuming in-flight work.
+
+### Back up and restore volumes
+
+The home volume holds provider credentials, the SSH host key, Ovis pairing
+keys, and terminal history, so treat backups as secrets. Stop the service first
+for a consistent copy (this ends live agent processes), then stream each volume
+through `tar` in a disposable container. Nothing is written inside the image and
+no host bind mount or root access is needed:
+
+```sh
+# Use docker instead of podman as appropriate; substitute your volume names
+# (the historical live deployment uses lboa-home / lboa-workspace).
+podman stop lucoa
+umask 077
+podman run --rm --cap-drop=ALL --security-opt=no-new-privileges \
+  -v lucoa-home:/home/node:ro ghcr.io/lutvzn/lucoa:latest \
+  tar -C /home/node -cf - . > lucoa-home.tar
+podman run --rm --cap-drop=ALL --security-opt=no-new-privileges \
+  -v lucoa-workspace:/workspace:ro ghcr.io/lutvzn/lucoa:latest \
+  tar -C /workspace -cf - . > lucoa-workspace.tar
+podman start lucoa
+```
+
+Restore into a **new, empty** volume and point a deployment at it, rather than
+extracting over a volume in use:
+
+```sh
+podman volume create lucoa-home-restored
+podman run --rm -i --cap-drop=ALL --security-opt=no-new-privileges \
+  -v lucoa-home-restored:/home/node ghcr.io/lutvzn/lucoa:latest \
+  tar -C /home/node -xf - < lucoa-home.tar
+```
+
+The smoke suite exercises this round trip on disposable volumes.
 
 ### Use a host project directory
 
@@ -696,6 +744,43 @@ set `LUCOA_IMAGE=lucoa:local` in `.env` after building and run
 Local builds need access to the container registry, Debian repositories, npm,
 GitHub, and `releases.herdr.dev`, but never provider credentials.
 
+`sh ci/build.sh IMAGE` does the same with Docker or Podman (it adds
+`--format docker` for Podman) and refuses non-x86_64 hosts.
+
+### Extra Debian packages
+
+Add packages at build time, for example a compiler toolchain for Python native
+extensions:
+
+```sh
+podman build --format docker --build-arg EXTRA_APT_PACKAGES="build-essential" \
+  -t localhost/lucoa:full .
+# Or: LUCOA_EXTRA_APT_PACKAGES="build-essential" sh ci/build.sh localhost/lucoa:full
+```
+
+Only Debian package-name characters are accepted. Extra packages must work
+unprivileged: the build still strips every setuid/setgid bit, and the smoke
+suite still requires that no privilege-escalation tool is present.
+
+### Keep pins current
+
+[`ci/bump-versions.mjs`](ci/bump-versions.mjs) checks every pin (Bun, uv,
+herdr-core, Ovis, the npm agents, the base image digest, CI tools, and
+workflow action SHAs) and can rewrite them with fresh checksums:
+
+```sh
+node ci/bump-versions.mjs                       # report only
+node ci/bump-versions.mjs --write               # update all pins
+node ci/bump-versions.mjs --write --only bun,agents
+```
+
+Releases younger than 14 days are skipped (`--min-age-days N`), pins are never
+downgraded, and herdr-core releases with a protocol generation other than 1 are
+refused. arm64 checksums are kept in step even though only amd64 is built.
+Nothing is built by the script: rebuild and run both test suites before
+committing new pins. Set `LUCOA_GITHUB_API_TOKEN` to avoid GitHub's anonymous
+API rate limit.
+
 ### Included versions
 
 | Component | Pin |
@@ -710,6 +795,8 @@ GitHub, and `releases.herdr.dev`, but never provider credentials.
 | Python 3 | Debian package; version follows its repository |
 | Dropbear SSH | Debian `dropbear-bin` package; version follows its repository |
 | uv / uvx (glibc) | 0.13.7 |
+| SFTP | Debian `openssh-sftp-server` (`/usr/lib/sftp-server`), no OpenSSH daemon |
+| Extra CLI tools | Debian `openssh-client`, `jq`, `less`, `procps` |
 
 Upstream archives are SHA-256 checked against [`build/versions.env`](build/versions.env).
 Agent dependencies use [`build/agents/package-lock.json`](build/agents/package-lock.json);
@@ -719,33 +806,98 @@ snapshotted, so OS builds are not bit-for-bit reproducible.
 Bun builds the UI during image construction. Startup runs the production server,
 not Vite or a runtime frontend build.
 
-## Publish to GHCR
+## CI and publishing (GitHub and Forgejo)
 
-In GitHub, open **Actions → Publish container to GHCR → Run workflow** and select
-the branch. Check **Also tag as latest** only when you want to replace `latest`.
+Both platforms run the same scripts in [`ci/`](ci); the workflow files are thin
+wrappers. Only **linux/amd64** is built, and the scripts refuse other runners.
 
-The workflow builds Linux amd64, runs the credential-free smoke suite, and
-publishes only after tests pass:
+| Script | Purpose |
+| --- | --- |
+| `ci/install-tools.sh` | Checksum-pinned ShellCheck, hadolint, Trivy, cosign ([`ci/tools.env`](ci/tools.env)) into `.ci/bin` |
+| `ci/lint.sh` | Shell/JS/Python syntax, ShellCheck, hadolint ([`.hadolint.yaml`](.hadolint.yaml)) |
+| `ci/build.sh IMAGE` | Docker or Podman build with OCI labels |
+| `ci/test.sh IMAGE` | Both disposable suites (smoke + SSH/SFTP) |
+| `ci/scan.sh IMAGE` | Trivy scan and CycloneDX SBOM in `.ci/out/`; fails on fixable CRITICAL issues |
+| `ci/publish.sh IMAGE` | Tag, push, and optionally sign/attest |
+
+The engine is `CONTAINER_ENGINE` if set, otherwise Docker, then Podman. Scan
+policy: `LUCOA_SCAN_FAIL_SEVERITY` (default `CRITICAL`, or `none`) and
+`LUCOA_SCAN_REPORT_SEVERITY` (default `HIGH,CRITICAL`).
+
+| Workflow | GitHub (`.github/workflows`) | Forgejo (`.forgejo/workflows`) |
+| --- | --- | --- |
+| Container: lint, build, test, scan | push, pull request, manual | push, manual (no pull requests) |
+| Publish | `v*` tags, manual | `v*` tags, manual |
+| Weekly freshness: pin report plus no-cache rebuild/test/scan | Mondays 05:17 UTC, manual | Same |
+
+Freshness runs only *report* newer pins. Apply them with
+`node ci/bump-versions.mjs --write`, then commit through normal CI.
+
+### Image tags
 
 | Tag | When published |
 | --- | --- |
-| `ghcr.io/lutvzn/lucoa:sha-<full-commit-sha>` | Every successful workflow run |
-| `ghcr.io/lutvzn/lucoa:latest` | Only when **Also tag as latest** is checked |
+| `sha-<full-commit-sha>` | Every successful publish run |
+| `X.Y.Z` and `X.Y` | Pushing tag `vX.Y.Z` (pre-releases like `v1.0.0-rc.1` get only `1.0.0-rc.1`) |
+| `latest` | Stable `vX.Y.Z` tags, or a manual run with **Also tag as latest** |
 
-The workflow uses the automatic `GITHUB_TOKEN` with `packages: write`; no personal
-access token is needed for publication. Repository/organization policy must
-allow it. Packages may initially be private, and private pulls require registry
-authentication.
+Publishing runs lint, build, both test suites, and the scan first. It does **not**
+deploy or restart containers. A manual workflow must exist on the default branch
+to show **Run workflow**. Since `latest` can be published from any selected
+branch, choose carefully.
+
+### GitHub (GHCR)
+
+Open **Actions → Publish container to GHCR → Run workflow**, or push a `v*` tag.
+Images go to `ghcr.io/<owner>/<repo>` using the automatic `GITHUB_TOKEN` with
+`packages: write`; repository or organization policy must allow it. New packages
+may start private, and private pulls need registry authentication. SBOMs and
+scan reports are uploaded as workflow artifacts.
+
+### Forgejo
+
+Forgejo uses `.forgejo/workflows` and ignores `.github/workflows` while it exists.
+
+1. **Register an x86_64 host runner** with the label `lucoa-host:host`, so jobs
+   run directly on a machine with a real container engine (Docker, or rootless
+   Podman as the runner user). The host needs `git`, `curl`, `node` (for the
+   checkout action and bump script), `python3`, and OpenSSH clients (`ssh`,
+   `ssh-keygen`, `sftp`). Set `CONTAINER_ENGINE=podman` in the runner's
+   environment to force Podman.
+2. **Security:** host runners have no isolation, so these workflows do not
+   trigger on pull requests. Use a dedicated runner account, never the account
+   running the live `lboa` service, and keep its engine free of production
+   containers.
+3. **Registry secrets** (repository or organization): `REGISTRY_TOKEN`, an
+   access token with package write scope (required; the automatic workflow token
+   is not used for pushes), and optionally `REGISTRY_USER` (token owner, which
+   defaults to the triggering user). Images go to `<forgejo-host>/<owner>/<repo>`.
+   The Forgejo instance must serve its registry at the host root.
+4. Optional `LUCOA_GITHUB_API_TOKEN` secret: a *GitHub* token for the weekly pin
+   report's API rate limit. The Forgejo token is never sent to GitHub.
+
+Actions are pinned to commit SHAs from `https://data.forgejo.org`, Forgejo's
+mirror, which carries the same commit as GitHub. The bump script refuses to
+update a pin if the mirror and GitHub disagree.
+
+### Signing (optional, both platforms)
+
+With a `COSIGN_PRIVATE_KEY` secret (and `COSIGN_PASSWORD` if the key is
+encrypted), publish signs the pushed digest and attaches the CycloneDX SBOM as a
+signed attestation. Without the secret, publishing still works and reports that
+the image is unsigned.
 
 ```sh
-docker pull ghcr.io/lutvzn/lucoa:latest
+cosign generate-key-pair        # store cosign.key + password as secrets; keep cosign.pub
+cosign verify --key cosign.pub ghcr.io/<owner>/<repo>:latest
+cosign verify-attestation --key cosign.pub --type cyclonedx ghcr.io/<owner>/<repo>:latest
 ```
 
-Publishing does **not** deploy or restart containers. Deployment examples use
-the published registry image; the workflow must run successfully before new
-source features are available there. The manual workflow must exist on the
-default branch to show **Run workflow**. Since `latest` can be published from
-any selected branch, choose carefully.
+Cosign's default signing configuration records signatures in Sigstore's
+**public** Rekor transparency log (image digest and signature, not image
+contents). For private registries where that is unwanted, pass a custom
+configuration through `COSIGN_SIGN_ARGS` (for example
+`--signing-config FILE`).
 
 ## Validation
 
@@ -757,7 +909,7 @@ sh tests/smoke.sh lucoa:local
 # Rootless Podman:
 CONTAINER_ENGINE=podman sh tests/smoke.sh localhost/lucoa:local
 
-# SSH integration (requires host ssh and ssh-keygen):
+# SSH/SFTP integration (requires host ssh, ssh-keygen, and sftp):
 CONTAINER_ENGINE=podman sh tests/ssh.sh localhost/lucoa:local
 # Docker: sh tests/ssh.sh lucoa:local
 
@@ -769,9 +921,12 @@ The main smoke suite creates disposable volumes and an ephemeral token, publishe
 no ports, and checks non-root tools, authentication, core-backed workspaces,
 WebSocket I/O/reconnect, file persistence, and shutdown. The SSH suite additionally
 publishes an ephemeral **loopback-only test port**, generates disposable keys,
-and checks key login, denied authentication, PTY access, `hc connect` RPC,
+and checks key login, denied authentication, PTY access, SFTP transfer, `hc connect` RPC,
 disconnect continuity, host-key persistence, and service failure propagation.
 Neither suite modifies Traefik or the firewall.
+
+The CI scripts wrap the same checks: `sh ci/install-tools.sh && sh ci/lint.sh &&
+sh ci/build.sh lucoa:local && sh ci/test.sh lucoa:local && sh ci/scan.sh lucoa:local`.
 
 Rootless Podman execution has been verified. Docker/Compose execution, hosted CI,
 Quadlet runtime/boot startup, graphical-browser rendering, real provider login,

@@ -1,0 +1,28 @@
+#!/bin/sh
+# Static checks: shell/JS syntax, ShellCheck, and hadolint.
+# Run `sh ci/install-tools.sh shellcheck hadolint` first (CI does this).
+set -eu
+cd "$(dirname "$0")/.."
+. ci/lib.sh
+ci_bin
+
+shell_scripts="build/install-upstream.sh scripts/entrypoint.sh scripts/ssh-shell.sh
+tests/smoke.sh tests/ssh.sh ci/lib.sh ci/install-tools.sh ci/lint.sh ci/build.sh
+ci/test.sh ci/scan.sh ci/publish.sh"
+js_scripts="scripts/services.mjs scripts/healthcheck.mjs tests/http.mjs tests/soak.mjs
+ci/bump-versions.mjs"
+
+for script in $shell_scripts; do sh -n "$script"; done
+for script in $js_scripts; do node --check "$script"; done
+python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' tests/python.py
+note 'syntax checks passed'
+
+command -v shellcheck >/dev/null || fail 'shellcheck not installed; run sh ci/install-tools.sh shellcheck'
+# -x follows `.` includes; -P resolves them relative to the repository root.
+# shellcheck disable=SC2086
+shellcheck -x -P SCRIPTDIR:. $shell_scripts
+note 'shellcheck passed'
+
+command -v hadolint >/dev/null || fail 'hadolint not installed; run sh ci/install-tools.sh hadolint'
+hadolint --config .hadolint.yaml Dockerfile
+note 'hadolint passed'

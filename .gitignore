@@ -5,3 +5,4 @@ secrets/
 workspace/
 node_modules/
 *.log
+.ci/

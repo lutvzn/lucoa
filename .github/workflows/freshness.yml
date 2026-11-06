@@ -1,0 +1,35 @@
+name: Weekly freshness
+
+# Reports newer upstream pins (nothing is changed or committed) and rebuilds
+# from scratch so Debian security updates and new CVEs surface weekly.
+on:
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Report available pin updates
+        env:
+          # A GitHub token only on GitHub; the Forgejo workflow does not send one.
+          LUCOA_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node ci/bump-versions.mjs
+      - name: Install pinned CI tools
+        run: sh ci/install-tools.sh trivy
+      - name: Fresh build (pull base, no cache)
+        env:
+          LUCOA_BUILD_FRESH: '1'
+        run: sh ci/build.sh lucoa:fresh
+      - name: Smoke and SSH tests
+        run: sh ci/test.sh lucoa:fresh
+      - name: Vulnerability scan
+        run: sh ci/scan.sh lucoa:fresh

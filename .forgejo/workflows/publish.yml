@@ -1,0 +1,70 @@
+name: Publish container to Forgejo registry
+
+# Forgejo Actions twin of .github/workflows/publish.yml. Pushes to this Forgejo
+# instance's container registry: <host>/<owner>/<repo>.
+#
+# Secrets (repository or organization):
+#   REGISTRY_TOKEN   required: access token with package write scope. The
+#                    automatic workflow token is repository-scoped and is not
+#                    used for package pushes.
+#   REGISTRY_USER    optional: token owner (defaults to the triggering user)
+#   COSIGN_PRIVATE_KEY, COSIGN_PASSWORD   optional: sign + attest SBOM
+#
+# Tags: vX.Y.Z pushes publish X.Y.Z, X.Y, sha-<commit>, latest (pre-releases
+# skip X.Y and latest). Manual runs publish sha-<commit>, latest if selected.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag_latest:
+        description: Also tag as latest (replaces the current latest image)
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: publish-registry
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: lucoa-host
+    timeout-minutes: 60
+    env:
+      LUCOA_SOURCE_URL: ${{ forgejo.server_url }}/${{ forgejo.repository }}
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned CI tools
+        run: sh ci/install-tools.sh shellcheck hadolint trivy cosign
+      - name: Lint
+        run: sh ci/lint.sh
+      - name: Build image
+        run: sh ci/build.sh "lucoa:publish-${{ forgejo.run_id }}"
+      - name: Smoke and SSH tests
+        run: sh ci/test.sh "lucoa:publish-${{ forgejo.run_id }}"
+      - name: Vulnerability scan and SBOM
+        run: sh ci/scan.sh "lucoa:publish-${{ forgejo.run_id }}"
+      - name: Push (and sign) image
+        env:
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER || forgejo.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_TOKEN }}
+          LUCOA_TAG_LATEST: ${{ forgejo.event_name == 'workflow_dispatch' && (inputs.tag_latest && 'true' || 'false') || 'auto' }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          [ -n "$REGISTRY_PASSWORD" ] || { echo 'lucoa-ci: set the REGISTRY_TOKEN secret' >&2; exit 1; }
+          host=${GITHUB_SERVER_URL#*://}
+          host=${host%%/*}
+          LUCOA_IMAGE_NAME=$(printf '%s/%s' "$host" "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+          export LUCOA_IMAGE_NAME
+          sh ci/publish.sh "lucoa:publish-${{ forgejo.run_id }}"
+      - name: Remove local images from the host
+        if: always()
+        run: |
+          . ci/lib.sh; detect_engine
+          "$CONTAINER_ENGINE" images --format '{{.Repository}}:{{.Tag}}' \
+            | grep -E "(^|/)lucoa:publish-${{ forgejo.run_id }}$|:sha-${GITHUB_SHA}$" \
+            | xargs -r "$CONTAINER_ENGINE" image rm -f >/dev/null 2>&1 || true

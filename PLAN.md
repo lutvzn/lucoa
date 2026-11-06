@@ -18,6 +18,16 @@ The live `lboa` deployment, volumes, credentials, and rollback container were no
 changed. Earlier smoke/build results do not validate the renamed image; rebuild
 and rerun disposable smoke tests before deployment.
 
+## CI, pin freshness, SFTP/tools — 2026-11-06 (not built)
+
+- **CI shared by GitHub and Forgejo:** logic moved into `ci/*.sh` (install pinned tools, lint, build, test, scan, publish); `.github/workflows` and `.forgejo/workflows` are thin wrappers. amd64 only; scripts refuse non-x86_64 runners. Forgejo jobs target a `lucoa-host:host` runner label and do not trigger on pull requests (host runners are unisolated). Actions are pinned by SHA (`actions/checkout` v7.0.1 is the same commit on GitHub and `data.forgejo.org`; `upload-artifact` v7.0.2 on GitHub only).
+- **Supply chain:** ShellCheck v0.11.0, hadolint v2.15.1, Trivy v0.76.0, and cosign v3.1.4 are checksum-pinned in `ci/tools.env`. Trivy produces a CycloneDX SBOM and fails on fixable CRITICAL vulnerabilities. Publishing adds `X.Y.Z`/`X.Y` tags for `v*` tags, `latest` for stable tags or a manual opt-in, and optional cosign key signing plus SBOM attestation. Registry credentials go to a throwaway auth config, not the runner's home.
+- **Pins:** `ci/bump-versions.mjs` checks and rewrites every pin with checksums, skipping releases under 14 days old and never downgrading. The weekly freshness workflow reports pins and does a no-cache rebuild/test/scan; it never commits. On 2026-11-06 it reported Bun 1.4.4, Trivy v0.76.1, and a new `node:26-trixie-slim` digest as eligible (herdr-core 0.1.18 was too new). **None of these were applied.** The Bun 1.4.4 checksums from GitHub's asset digests matched upstream `SHASUMS256.txt`.
+- **Image:** added `openssh-client`, `openssh-sftp-server` (Debian Dropbear's `SFTPSERVER_PATH` is `/usr/lib/sftp-server`), `jq`, `less`, and `procps`, plus an `EXTRA_APT_PACKAGES` build argument limited to package-name characters. The healthcheck already requires the herdr-core backend (`body.herdr`), so it is unchanged.
+- **Tests:** the smoke suite checks the new tools and a tar backup/restore round trip. The SSH suite checks SFTP upload/download, start directory, and file ownership.
+- **Verified here:** ShellCheck and hadolint (pinned binaries) passed. Shell/JS/Python syntax and YAML parsing passed for all workflows. Publish tag selection was tested with a stub engine. Bump `--write` was tested on a scratch copy.
+- **Not verified:** no container engine was available, so nothing was built, smoke-tested, scanned, or published. Neither GitHub nor Forgejo workflows have run. Cosign signing/attestation, registry pushes, the Forgejo host-runner setup, and real SFTP sessions are untested. Live `lboa` is unchanged.
+
 ## Debian base migration — 2026-11-04 (not built)
 
 - Base changed to `node:26-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39` (image created 2026-10-28; Node 26.13.0; Debian trixie; index lists amd64, arm64/v8, ppc64le, s390x). The base already provides `node` as UID/GID 1000 with `/home/node`.

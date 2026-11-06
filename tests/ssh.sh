@@ -1,5 +1,6 @@
 #!/bin/sh
-# Disposable SSH integration tests. Requires host OpenSSH client tools.
+# Disposable SSH integration tests. Requires host OpenSSH client tools
+# (ssh, ssh-keygen, sftp).
 # Single-quoted programs intentionally expand in the container/SSH session.
 # shellcheck disable=SC2016
 set -eu
@@ -16,7 +17,7 @@ cleanup() {
     rm -rf "$tmp"
 }
 trap cleanup EXIT HUP INT TERM
-for tool in ssh ssh-keygen; do command -v "$tool" >/dev/null; done
+for tool in ssh ssh-keygen sftp; do command -v "$tool" >/dev/null; done
 ssh-keygen -q -t ed25519 -N '' -f "$tmp/client"
 ssh-keygen -q -t ed25519 -N '' -f "$tmp/wrong"
 "$engine" volume create "$home" >/dev/null
@@ -55,6 +56,15 @@ if ! sleep 3 | remote -tt node@127.0.0.1 'test -t 0 && printf pty-ok' > "$tmp/pt
     exit 1
 fi
 grep -q pty-ok "$tmp/pty"
+# SFTP subsystem: starts in /workspace, uploads and downloads as UID 1000.
+printf sftp-upload > "$tmp/upload"
+printf '%s\n' pwd "put $tmp/upload sftp-upload" "get /workspace/ssh-test $tmp/download" > "$tmp/sftp-batch"
+sftp -F /dev/null -P "$port" -i "$tmp/client" -o IdentitiesOnly=yes -o BatchMode=yes \
+    -o ConnectTimeout=5 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$tmp/known_hosts" \
+    -b "$tmp/sftp-batch" node@127.0.0.1 > "$tmp/sftp-out"
+grep -q 'Remote working directory: /workspace' "$tmp/sftp-out"
+[ "$(cat "$tmp/download")" = ssh-persist ]
+remote node@127.0.0.1 'set -eu; test "$(cat /workspace/sftp-upload)" = sftp-upload; test "$(stat -c %u /workspace/sftp-upload)" = 1000'
 remote node@127.0.0.1 'hc ls' > /dev/null
 # Exercise the actual stdio RPC transport used by desktop clients.
 { printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"terminal.list","params":{}}'; sleep 2; } \
@@ -141,4 +151,4 @@ for mode in both blank private; do
     esac
 done
 unset LUCOA_SSH_AUTHORIZED_KEYS
-echo 'PASS: SSH key login/file/env import, multiline keys, conflicting/invalid input rejection, non-root tools/core, PTY, denied auth, empty keys, SSH disabled, persistence, graceful shutdown, failure propagation'
+echo 'PASS: SSH key login/file/env import, SFTP upload/download, multiline keys, conflicting/invalid input rejection, non-root tools/core, PTY, denied auth, empty keys, SSH disabled, persistence, graceful shutdown, failure propagation'

@@ -78,6 +78,13 @@ Do not rename/redeploy them or create replacement volumes without approval.
 - Python is now the Debian `python3` package (3.13 series in trixie) instead of Alpine's 3.14. Existing virtual environments created on the Alpine image are not compatible.
 - **Not built or tested:** no container engine was available in the authoring session. Build with `podman build --format docker` and run both smoke suites before publishing or deploying. The live `lboa` service still runs the Alpine-based `localhost/lboa:python-uv` image; Alpine-specific notes in the handoff above describe that image.
 
+### CI, pins, and SFTP additions (not built)
+
+- Shared CI scripts in `ci/` back both `.github/workflows` and `.forgejo/workflows` (Forgejo: `lucoa-host:host` x86_64 runner, no pull-request trigger, `REGISTRY_TOKEN` secret for pushes). Only linux/amd64 is built, at the user's request; do not add arm64 builds.
+- `ci/bump-versions.mjs` checks/rewrites pins with checksums (14-day minimum age, no downgrades); the weekly freshness workflow only reports. Available bumps found on 2026-11-06 were **not applied**.
+- The image adds `openssh-client`, `openssh-sftp-server` (SFTP/scp over the existing Dropbear port), `jq`, `less`, `procps`, and an `EXTRA_APT_PACKAGES` build argument. README documents backup/restore via `tar` streams.
+- Lint, ShellCheck, hadolint, and YAML parsing passed locally. **No image build, smoke/SSH run, scan, or workflow execution has happened**; see PLAN.md.
+
 ### Current access and network boundary
 
 - The live instance publishes **only `127.0.0.1:7317:7317`**. Open **http://127.0.0.1:7317** locally.
