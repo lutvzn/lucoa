@@ -69,4 +69,9 @@ fi
 if [ "$(id -u)" -eq 0 ]; then
     printf '%s\n' 'lucoa: warning: running a command override as root; prefer the default node user' >&2
 fi
+# Overrides skip the setup above, but tools such as podman-remote fail when
+# XDG_RUNTIME_DIR names a missing directory. Create it best-effort (private).
+if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ ! -e "$XDG_RUNTIME_DIR" ]; then
+    mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null && chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
+fi
 exec "$@"
