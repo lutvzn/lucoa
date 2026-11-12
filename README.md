@@ -568,6 +568,10 @@ Podman API socket. Without one, `podman` commands fail with a connection error.
 > `OVIS_TOKEN_FILE` over `-e OVIS_TOKEN`. This is opt-in and not part of the
 > default deployment examples.
 
+The quick setup below shares the Podman of the account that runs lucoa. To use
+a separate, locked-down account instead, follow
+[Dedicated builder account](#dedicated-builder-account-recommended).
+
 1. On the host, as the account that runs lucoa, enable its rootless API socket:
 
    ```sh
@@ -615,6 +619,69 @@ Podman 5.x. `podman-remote` cannot talk to a Docker daemon.
 Docker hosts are not supported for this feature. Running a nested engine inside
 lucoa instead would need privileged mode or extra capabilities, which the
 project avoids.
+
+### Dedicated builder account (recommended)
+
+[`host/setup-builder.sh`](host/setup-builder.sh) sets up the dedicated account
+described above. Run it on the **host** as root (it is not part of the image).
+Name the host account that runs lucoa with `--client`:
+
+```sh
+sudo sh host/setup-builder.sh --dry-run --client "$USER"   # review first
+sudo sh host/setup-builder.sh --client "$USER"
+```
+
+What it configures:
+
+| Item | Setting |
+| --- | --- |
+| Account `lucoa-builder` | UID/GID **6000** by default: the smallest number from 6000 up that is free as both. Set it with `--uid N`; an existing account is never renumbered. Login shell is `nologin`, password is locked, home is `0700`. The script refuses accounts with UID/GID 0, privileged groups (`wheel`, `sudo`, `docker`, …) or sudo rules |
+| Subordinate IDs | A free 65536-ID range in `/etc/subuid` and `/etc/subgid`, used for rootless Podman |
+| Resource limits | Root-owned drop-in for `user-<uid>.slice`: `MemoryMax=50%`, no swap, `TasksMax=4096`, `CPUWeight=50`, `IOWeight=50`. It covers the API service and every container it starts. Change with `--memory-max`, `--tasks-max`, `--cpu-weight`, `--io-weight`, `--cpu-quota` |
+| Socket directory | `/run/lucoa-builder`, owned by root with mode `0700`, recreated at boot by `tmpfiles.d`. Its ACL lets the builder create the socket and lets only the `--client` UIDs traverse it |
+| API socket | `/run/lucoa-builder/podman.sock`, owned by the builder with mode `0600`, plus an ACL granting the `--client` UIDs read/write. It activates a rootless `podman system service` in the builder's user manager (units in `/etc/systemd/user/lucoa-builder-podman.*`). Lingering is enabled, so it runs without a login |
+
+At the end, the script checks that the socket is not world-accessible, that an
+unrelated UID cannot reach the directory, and that each client account gets a
+**rootless** API through the socket.
+
+**Mount the directory, not the socket file**, so restarts of the socket do not
+leave a stale mount. Do not add `:z`/`:Z`, because relabeling would fail and is
+not needed with `label=disable`:
+
+```sh
+  --userns=keep-id:uid=1000,gid=1000 \
+  --security-opt label=disable \
+  -v /run/lucoa-builder:/run/podman \
+```
+
+Quadlet: `UserNS=keep-id:uid=1000,gid=1000`, `SecurityLabelDisable=true`,
+`Volume=/run/lucoa-builder:/run/podman`.
+
+**Without `keep-id`**, lucoa's `node` user maps to a subordinate host UID, not
+to the client account. Pass that UID instead: for rootless Podman it is the
+first `/etc/subuid` value of the account that runs lucoa, plus 999. Example:
+`--client 525287` for `lutvzn:524288:65536`. You can pass `--client` more than
+once. Rerun the script to change clients or limits.
+
+**What stays possible:** anything inside lucoa that reaches the socket fully
+controls `lucoa-builder`. It can build and run containers, publish ports on
+the host (above `ip_unprivileged_port_start`), use the network, and bind-mount
+any host path that `lucoa-builder` can read (world-readable files only). Keep
+nothing else in that account. Image and volume storage in
+`/home/lucoa-builder` has no size limit from the slice, so prune it from inside
+lucoa with `podman system prune --all`.
+
+**Remove:**
+
+```sh
+sudo sh host/setup-builder.sh --uninstall                 # keeps the account and its images
+sudo sh host/setup-builder.sh --uninstall --delete-user   # also deletes its home and subuid ranges
+```
+
+`--delete-user` refuses accounts that the script did not create. Use `--user`
+and `--socket-dir` to choose other names. An existing account is adopted only
+with `--reuse-user`, which also hardens it.
 
 ## Persistent storage
 

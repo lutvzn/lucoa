@@ -93,6 +93,17 @@ Do not rename/redeploy them or create replacement volumes without approval.
 - The requirements above now prefer rootless solutions rather than forbidding root. With user approval, the entrypoint now allows UID 0 for **command overrides** (with a stderr warning) but still refuses to start the Ovis server as root. The smoke suite asserts both. The default image still ships no sudo/doas/su or setuid files, and the smoke suite still checks that.
 - Not built or run, and live `lboa` is unchanged. Client/server compatibility with the host's Podman version is unverified.
 
+### Dedicated builder account (deployed 2026-11-12)
+
+- `host/setup-builder.sh` (host-side, run as root; not in the image) creates a hardened `lucoa-builder` account (UID/GID 6000 by default: the smallest free from 6000 up; `--uid N` overrides): nologin, locked password, `0700` home, refuses privileged groups/sudo rules. It allocates subuid/subgid ranges and adds root-owned `user-<uid>.slice` limits (default `MemoryMax=50%`, no swap, `TasksMax=4096`, CPU/IO weight 50). It runs a socket-activated rootless Podman API at `/run/lucoa-builder/podman.sock` (dir root `0700`, socket `0600`, POSIX ACLs only for `--client` UIDs) with lingering. `--uninstall [--delete-user]` reverses it; `--dry-run` previews.
+- lucoa mounts the **directory** (`-v /run/lucoa-builder:/run/podman`) with `label=disable`, plus `keep-id` or a `--client` set to the mapped subordinate UID.
+- Verified here: ShellCheck, dry-run/argument validation, `tmpfiles.d` ACL syntax including numeric UIDs, `systemd-analyze verify` of the units, and the ACL design with real containers. The non-owner subordinate UID connected and got a rootless API. An unrelated UID got `EACCES`, and SELinux denied the connection without `label=disable`.
+- **Deployed by the user on 2026-11-12** with `--client lutvzn`. `lucoa-builder` exists as UID/GID 6000 (subids 655360+65536), is lingering, has a nologin shell, and has active slice limits (`MemoryMax` resolved to 16620539904 bytes, no swap, `TasksMax=4096`, CPU/IO weight 50). The ACLs are `/run/lucoa-builder` u:6000 rwx / u:5997 x and the socket u:5997 rw, with nothing for others.
+- The live Quadlet `~/.config/containers/systemd/lucoa/lucoa.container` (container `lucoa`) now mounts `Volume=/run/lucoa-builder:/run/podman` instead of `lutvzn`'s `%t/podman/podman.sock`. Verified inside it: UID 1000, `rootless=true`, graphroot `/home/lucoa-builder/...`, no `lutvzn` containers visible, `/run/user/5997` absent. A busybox build/run worked; its process ran in `user-6000.slice/user@6000.service/.../libpod-*.scope`, and nothing was added to `lutvzn`'s store. Test images were removed.
+- **Keep `lutvzn`'s own `podman.socket` enabled:** `traefik` and `forgejo-runner` mount it and `Requires=podman.socket`. Never mount it into lucoa again.
+- The old unrelated `builder` account (UID 6001) was deleted by the user, including its group and subids.
+- **Survives a host reboot (user-run checks, 2026-11-12):** `/run/lucoa-builder` was recreated with its ACLs, `user@6000.service` was active without a login, Podman inside lucoa was rootless on `/home/lucoa-builder` storage with no `lutvzn` containers visible, and `lucoa`, `traefik` and `forgejo-runner` all came back up.
+
 ### Current access and network boundary
 
 - The live instance publishes **only `127.0.0.1:7317:7317`**. Open **http://127.0.0.1:7317** locally.
