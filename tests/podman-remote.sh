@@ -29,19 +29,19 @@ until [ -S "$tmp/podman.sock" ]; do
     sleep 0.2
 done
 
-# keep-id maps the host user (socket owner) to the container's node user.
+# keep-id maps the host user (socket owner) to the container's lutvzn user.
 # label=disable lets SELinux hosts connect to the mounted socket.
 podman run --rm --cap-drop=ALL --security-opt=no-new-privileges \
-    --userns=keep-id:uid=1000,gid=1000 --security-opt label=disable \
+    --userns=keep-id:uid=5997,gid=5997 --security-opt label=disable \
     -v "$tmp/podman.sock:/run/podman/podman.sock" \
     -e LUCOA_TEST_BASE="$image" -e LUCOA_TEST_TAG="$built" \
     "$image" sh -eu -c '
-    test "$(id -u)" = 1000
+    test "$(id -u)" = 5997
     test "$(readlink -f "$(command -v podman)")" = /usr/bin/podman-remote
     podman --version
     podman info --format "{{.Host.Security.Rootless}}" | grep -qx true
     ctx=$(mktemp -d)
-    printf "FROM %s\nRUN test \"\$(id -u)\" = 1000 && echo built-in-lucoa > /tmp/marker\n" "$LUCOA_TEST_BASE" > "$ctx/Containerfile"
+    printf "FROM %s\nRUN test \"\$(id -u)\" = 5997 && echo built-in-lucoa > /tmp/marker\n" "$LUCOA_TEST_BASE" > "$ctx/Containerfile"
     podman build --quiet -t "$LUCOA_TEST_TAG" "$ctx" >/dev/null
     test "$(podman run --rm "$LUCOA_TEST_TAG" cat /tmp/marker)" = built-in-lucoa
     podman image rm "$LUCOA_TEST_TAG" >/dev/null
@@ -49,4 +49,4 @@ podman run --rm --cap-drop=ALL --security-opt=no-new-privileges \
 if podman image exists "$built"; then
     echo 'FAIL: image removal through podman-remote did not reach the host' >&2; exit 1
 fi
-echo 'PASS: podman-remote client, rootless host API over mounted socket, build/run/remove as UID 1000'
+echo 'PASS: podman-remote client, rootless host API over mounted socket, build/run/remove as UID 5997'

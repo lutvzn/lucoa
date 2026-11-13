@@ -52,8 +52,8 @@ Usage: $PROG --client USER|UID [--client ...] [options]
 Install options:
   --client USER|UID   Host account (or numeric host UID) allowed to use the
                       socket. Required; repeatable. Use the account that runs
-                      lucoa with --userns=keep-id:uid=1000,gid=1000, or the
-                      host UID that lucoa's node user (UID 1000) maps to.
+                      lucoa with --userns=keep-id:uid=5997,gid=5997, or the
+                      host UID that lucoa's lutvzn user (UID 5997) maps to.
   --user NAME         Builder account name (default: $builder).
   --socket-dir DIR    Socket directory under /run (default: $socket_dir).
   --memory-max VALUE  MemoryMax for the builder slice, e.g. 8G or 50%
@@ -445,13 +445,13 @@ Done. Builder account: $builder (UID $uid). Socket: $sock
 
 Mount it into lucoa (run by a --client account) by adding to \`podman run\`:
 
-  --userns=keep-id:uid=1000,gid=1000 \\
+  --userns=keep-id:uid=5997,gid=5997 \\
   --security-opt label=disable \\
   -v $socket_dir:/run/podman \\
 
 or to a Quadlet [Container] section:
 
-  UserNS=keep-id:uid=1000,gid=1000
+  UserNS=keep-id:uid=5997,gid=5997
   SecurityLabelDisable=true
   Volume=$socket_dir:/run/podman
 

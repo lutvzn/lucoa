@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import zipfile
 
-assert os.getuid() == 1000
+assert os.getuid() == 5997
 assert importlib.util.find_spec("pip") is None
 with tempfile.TemporaryDirectory(prefix="lucoa-python-", dir="/workspace") as directory:
     root = Path(directory)

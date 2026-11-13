@@ -1,47 +1,59 @@
 # syntax=docker/dockerfile:1
-# Multi-architecture node:26-trixie-slim (Debian 13) index, reviewed 2026-11-04.
-FROM node:26-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS runtime-base
+# Digest-pinned fedora:45 (Fedora 45, glibc), reviewed 2026-11-13.
+FROM docker.io/library/fedora:45@sha256:a7d72ba2745b100a3351087472e5ee7b2450af7cf331e7673007e3817612839c AS runtime-base
 
-# Optional extra Debian packages (space-separated), e.g. "build-essential".
+# Optional extra Fedora packages (space-separated), e.g. "gcc make".
 # They must work unprivileged; setuid bits are stripped below regardless.
-ARG EXTRA_APT_PACKAGES=""
+ARG EXTRA_DNF_PACKAGES=""
 
 # Root is used only for image construction. No privilege-escalation packages.
-# dropbear-bin ships the server binaries without the root-run init service.
-# Debian's Dropbear runs /usr/lib/sftp-server from openssh-sftp-server for
-# SFTP (and modern scp); no OpenSSH server or daemon is installed.
+# Fedora's dropbear package provides the server and dropbearkey without an
+# enabled service. Its SFTP subsystem runs /usr/libexec/openssh/sftp-server,
+# which comes from openssh-server. The sshd daemon and its units are removed
+# below, so no OpenSSH daemon is present in the image.
 # podman-remote is only a client: it builds/runs images through a host Podman
 # API socket that the operator chooses to mount (see README); no daemon here.
 # Remove su and strip every setuid/setgid bit from the base image.
 # hadolint ignore=SC2086
-RUN case "$EXTRA_APT_PACKAGES" in *[!a-z0-9.+:\ -]*) echo 'invalid EXTRA_APT_PACKAGES' >&2; exit 1 ;; esac \
-    && apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        bash ca-certificates curl git ripgrep python3 dropbear-bin \
-        openssh-client openssh-sftp-server jq less procps podman-remote \
-        $EXTRA_APT_PACKAGES \
-    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb \
+RUN case "$EXTRA_DNF_PACKAGES" in *[!a-z0-9.+_:\ -]*) echo 'invalid EXTRA_DNF_PACKAGES' >&2; exit 1 ;; esac \
+    && dnf -y install --setopt=install_weak_deps=False \
+        bash ca-certificates curl git ripgrep python3 dropbear unzip \
+        openssh-clients openssh-server xz libatomic jq less procps-ng podman-remote \
+        $EXTRA_DNF_PACKAGES \
+    && rm -f /usr/sbin/sshd /usr/lib/systemd/system/sshd*.service /usr/lib/systemd/system/sshd*.socket \
+        /etc/systemd/system/multi-user.target.wants/sshd.service \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf /var/cache/libdnf5 \
+    && rpm -e --nodeps sudo \
     && rm -f /bin/su /usr/bin/su \
     && find / -xdev -type f -perm /6000 -exec chmod a-s {} + \
+    && groupadd --gid 5997 lutvzn \
+    && useradd --uid 5997 --gid 5997 --create-home --home-dir /home/lutvzn --shell /bin/bash lutvzn \
     && mkdir -p /opt/lucoa/bin /opt/lucoa/agents /opt/lucoa/ovis /workspace \
-    && chown -R node:node /opt/lucoa /workspace /home/node
+    && chown -R lutvzn:lutvzn /opt/lucoa /workspace /home/lutvzn
 
-ENV HOME=/home/node \
-    PATH=/opt/lucoa/bin:/home/node/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+# fnm manages Node: fnm binary and Node 26 under FNM_DIR, both checksum-pinned.
+COPY build/versions.env build/install-fnm.sh /tmp/lucoa-build/
+RUN sh /tmp/lucoa-build/install-fnm.sh && rm -rf /tmp/lucoa-build \
+    && chown -R lutvzn:lutvzn /opt/lucoa/fnm
+
+ENV HOME=/home/lutvzn \
+    FNM_DIR=/opt/lucoa/fnm \
+    PATH=/opt/lucoa/bin:/opt/lucoa/fnm/aliases/default/bin:/home/lutvzn/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     npm_config_prefix=/opt/lucoa \
     npm_config_update_notifier=false
 
 FROM runtime-base AS build
 USER root
-RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends unzip \
-    && rm -rf /var/lib/apt/lists/*
-COPY --chown=node:node build/versions.env build/install-upstream.sh /tmp/lucoa-build/
-USER node
+RUN dnf -y install --setopt=install_weak_deps=False unzip \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf /var/cache/libdnf5
+COPY --chown=lutvzn:lutvzn build/versions.env build/install-upstream.sh /tmp/lucoa-build/
+USER lutvzn
 RUN sh /tmp/lucoa-build/install-upstream.sh
 
 WORKDIR /opt/lucoa/agents
-COPY --chown=node:node build/agents/package.json build/agents/package-lock.json ./
+COPY --chown=lutvzn:lutvzn build/agents/package.json build/agents/package-lock.json ./
 # Skip arbitrary dependency lifecycle scripts, then run only Claude's reviewed
 # binary-linking postinstall. Keep optional dependencies enabled so npm selects
 # the glibc native package for this platform.
@@ -58,26 +70,27 @@ RUN bun install --frozen-lockfile --ignore-scripts \
     && bun install --production --frozen-lockfile --ignore-scripts
 
 FROM runtime-base AS final
-COPY --from=build --chown=node:node /opt/lucoa /opt/lucoa
-COPY --chown=node:node build/versions.env /opt/lucoa/versions.env
-COPY scripts/entrypoint.sh scripts/healthcheck.mjs scripts/services.mjs scripts/ssh-shell.sh /usr/local/lib/lucoa/
+COPY --from=build --chown=lutvzn:lutvzn /opt/lucoa /opt/lucoa
+COPY --chown=lutvzn:lutvzn build/versions.env /opt/lucoa/versions.env
+COPY scripts/entrypoint.sh scripts/healthcheck.sh scripts/services.sh scripts/ssh-shell.sh /usr/local/lib/lucoa/
 RUN chmod 755 /usr/local/lib/lucoa/entrypoint.sh /usr/local/lib/lucoa/ssh-shell.sh \
+    /usr/local/lib/lucoa/healthcheck.sh /usr/local/lib/lucoa/services.sh \
     && ln -s /usr/bin/podman-remote /opt/lucoa/bin/podman \
-    && sed -i 's|^node:\(.*\):[^:]*$|node:\1:/usr/local/lib/lucoa/ssh-shell.sh|' /etc/passwd \
+    && sed -i 's|^lutvzn:\(.*\):[^:]*$|lutvzn:\1:/usr/local/lib/lucoa/ssh-shell.sh|' /etc/passwd \
     && printf '%s\n' /usr/local/lib/lucoa/ssh-shell.sh >> /etc/shells
 
 ENV LUCOA_SSH_ENABLED=1 \
     CONTAINER_HOST=unix:///run/podman/podman.sock \
     OVIS_RUNTIME=herdr-core \
     OVIS_HC_BIN=/opt/lucoa/bin/herdr-core \
-    OVIS_STATE_DIR=/home/node/.config/ovis \
+    OVIS_STATE_DIR=/home/lutvzn/.config/ovis \
     OVIS_AUTO_UPDATE=0 \
     OVIS_TELEMETRY=0 \
     HOST=0.0.0.0 \
     PORT=7317 \
-    XDG_CONFIG_HOME=/home/node/.config \
-    XDG_STATE_HOME=/home/node/.local/state \
-    XDG_CACHE_HOME=/home/node/.cache \
+    XDG_CONFIG_HOME=/home/lutvzn/.config \
+    XDG_STATE_HOME=/home/lutvzn/.local/state \
+    XDG_CACHE_HOME=/home/lutvzn/.cache \
     XDG_RUNTIME_DIR=/tmp/lucoa-runtime \
     SHELL=/bin/bash \
     TERM=xterm-256color \
@@ -86,11 +99,11 @@ ENV LUCOA_SSH_ENABLED=1 \
     PI_SKIP_VERSION_CHECK=1
 
 WORKDIR /workspace
-USER node
+USER lutvzn
 EXPOSE 7317 2222
 STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
-    CMD ["node", "/usr/local/lib/lucoa/healthcheck.mjs"]
+    CMD ["/usr/local/lib/lucoa/healthcheck.sh"]
 ENTRYPOINT ["/usr/local/lib/lucoa/entrypoint.sh"]
 # Direct upstream server entry: prebuilt UI, no development server or runtime build.
 # The container engine owns restarts; this bypasses Ovis's managed updater.

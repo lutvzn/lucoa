@@ -18,23 +18,23 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-"$engine" image inspect "$image" --format '{{json .Config.Healthcheck}}' | grep -q '/usr/local/lib/lucoa/healthcheck.mjs'
+"$engine" image inspect "$image" --format '{{json .Config.Healthcheck}}' | grep -q '/usr/local/lib/lucoa/healthcheck.sh'
 configured_user=$("$engine" image inspect "$image" --format '{{.Config.User}}')
 case "$configured_user" in ''|root|0|0:*) echo 'FAIL: image default user is root/unset' >&2; exit 1 ;; esac
 "$engine" run --rm --cap-drop=ALL --security-opt=no-new-privileges "$image" sh -eu -c '
-    test "$(id -u)" = 1000
+    test "$(id -u)" = 5997
     test "$(node -p "process.versions.node.split(\".\")[0]")" = 26
-    test -f /etc/debian_version
-    for tool in bun hc herdr-core claude pi git rg bash python3 uv uvx dropbear dropbearkey jq less ssh ps podman podman-remote; do command -v "$tool"; done
+    test "$(readlink -f "$(command -v node)")" = "$FNM_DIR/node-versions/v26.13.0/installation/bin/node"
+    fnm --version
+    grep -q "^ID=fedora$" /etc/os-release
+    for tool in fnm bun hc herdr-core claude pi git rg bash python3 uv uvx dropbear dropbearkey jq less ssh ps podman podman-remote; do command -v "$tool"; done
     test "$(readlink -f "$(command -v podman)")" = /usr/bin/podman-remote
     podman --version
-    test -x /usr/lib/sftp-server
+    test -x /usr/libexec/openssh/sftp-server
     printf "{\"ok\":true}" | jq -e .ok >/dev/null
     bun --version; hc --version; claude --version; pi --version
     python3 --version; uv --version; uvx --version
-    ! command -v sudo
-    ! command -v doas
-    ! command -v su
+    for bin in sudo doas su sshd; do if command -v "$bin" >/dev/null; then echo "unexpected privilege or daemon tool: $bin" >&2; exit 1; fi; done
     test -z "$(find /bin /sbin /usr -type f -perm /6000 -print)"
     test -w /opt/lucoa; test -w "$HOME"; test -w /workspace
 '
@@ -54,17 +54,17 @@ fi
 grep -q 'refusing to run the Ovis server as root' "$tmp/root.log"
 
 # Pass the test token by environment, not expanded command arguments or log output.
-OVIS_TOKEN=$("$engine" run --rm "$image" node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("hex"))')
+OVIS_TOKEN=$("$engine" run --rm "$image" sh -c 'od -An -N32 -tx1 /dev/urandom | tr -d " \n"')
 export OVIS_TOKEN
 "$engine" volume create "$home" >/dev/null
 "$engine" volume create "$workspace" >/dev/null
 start() {
     "$engine" run -d --name "$name" --init --cap-drop=ALL --security-opt=no-new-privileges \
-        "$@" -v "$home:/home/node" -v "$workspace:/workspace" "$image" >/dev/null
+        "$@" -v "$home:/home/lutvzn" -v "$workspace:/workspace" "$image" >/dev/null
 }
 ready() {
     i=0
-    until "$engine" exec "$name" node /usr/local/lib/lucoa/healthcheck.mjs >/dev/null 2>&1; do
+    until "$engine" exec "$name" /usr/local/lib/lucoa/healthcheck.sh >/dev/null 2>&1; do
         i=$((i + 1))
         if [ "$i" -ge 45 ]; then
             echo 'FAIL: server did not become ready' >&2
@@ -76,12 +76,12 @@ ready() {
 }
 start -e OVIS_TOKEN
 ready
-"$engine" cp tests/http.mjs "$name:/tmp/lucoa-http.mjs"
-"$engine" exec "$name" bun /tmp/lucoa-http.mjs
+"$engine" cp tests/http.sh "$name:/tmp/lucoa-http.sh"
+"$engine" exec -e OVIS_TOKEN "$name" bash /tmp/lucoa-http.sh
 if [ "${LUCOA_SOAK_SECONDS:-0}" != 0 ]; then
     export LUCOA_SOAK_SECONDS
-    "$engine" cp tests/soak.mjs "$name:/tmp/lucoa-soak.mjs"
-    "$engine" exec -e LUCOA_SOAK_SECONDS "$name" node /tmp/lucoa-soak.mjs
+    "$engine" cp tests/soak.sh "$name:/tmp/lucoa-soak.sh"
+    "$engine" exec -e LUCOA_SOAK_SECONDS "$name" bash /tmp/lucoa-soak.sh
 fi
 "$engine" exec "$name" sh -eu -c '
     for dir in "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR" "$OVIS_STATE_DIR"; do
@@ -91,13 +91,13 @@ fi
     printf workspace-persist > /workspace/.lucoa-smoke
 '
 # Exercise file-based secrets on recreation without putting the token in argv.
-"$engine" exec "$name" node -e 'require("fs").writeFileSync(process.env.HOME + "/.lucoa-test-token", process.env.OVIS_TOKEN, {mode: 0o600})'
+"$engine" exec -e OVIS_TOKEN "$name" sh -eu -c 'umask 077; printf "%s" "$OVIS_TOKEN" > "$HOME/.lucoa-test-token"'
 "$engine" stop -t 20 "$name" >/dev/null
 "$engine" rm "$name" >/dev/null
-start -e OVIS_TOKEN_FILE=/home/node/.lucoa-test-token
+start -e OVIS_TOKEN_FILE=/home/lutvzn/.lucoa-test-token
 ready
-"$engine" cp tests/http.mjs "$name:/tmp/lucoa-http.mjs"
-"$engine" exec -e OVIS_TOKEN "$name" bun /tmp/lucoa-http.mjs
+"$engine" cp tests/http.sh "$name:/tmp/lucoa-http.sh"
+"$engine" exec -e OVIS_TOKEN "$name" bash /tmp/lucoa-http.sh
 "$engine" exec "$name" sh -eu -c '
     test "$(cat "$HOME/.lucoa-smoke")" = home-persist
     test "$(cat /workspace/.lucoa-smoke)" = workspace-persist
@@ -108,15 +108,15 @@ exit_code=$("$engine" inspect "$name" --format '{{.State.ExitCode}}')
 [ "$exit_code" = 0 ] || { echo "FAIL: nonzero shutdown: $exit_code" >&2; exit 1; }
 # Documented backup/restore: stream a stopped volume through tar via stdout/stdin.
 "$engine" run --rm --cap-drop=ALL --security-opt=no-new-privileges \
-    -v "$home:/home/node:ro" "$image" tar -C /home/node -cf - . > "$tmp/home.tar"
+    -v "$home:/home/lutvzn:ro" "$image" tar -C /home/lutvzn -cf - . > "$tmp/home.tar"
 tar -tf "$tmp/home.tar" | grep -qx './.lucoa-smoke'
 "$engine" volume create "$restored" >/dev/null
 "$engine" run --rm -i --cap-drop=ALL --security-opt=no-new-privileges \
-    -v "$restored:/home/node" "$image" tar -C /home/node -xf - < "$tmp/home.tar"
+    -v "$restored:/home/lutvzn" "$image" tar -C /home/lutvzn -xf - < "$tmp/home.tar"
 "$engine" run --rm --cap-drop=ALL --security-opt=no-new-privileges \
-    -v "$restored:/home/node:ro" "$image" sh -eu -c '
+    -v "$restored:/home/lutvzn:ro" "$image" sh -eu -c '
     test "$(cat "$HOME/.lucoa-smoke")" = home-persist
-    test "$(stat -c %u:%a "$HOME/.lucoa-test-token")" = 1000:600
+    test "$(stat -c %u:%a "$HOME/.lucoa-test-token")" = 5997:600
 '
 echo 'PASS: non-root tools, auth-required startup, hardened runtime, HTTP/WebSocket workflow, token file, persistent mounts, graceful shutdown, backup/restore, extra tools'
 echo 'NOT TESTED: real provider credentials, graphical browser UI, Traefik, LAN firewall rules, long soak, arm64'

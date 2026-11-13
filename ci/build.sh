@@ -2,7 +2,7 @@
 # Build the linux/amd64 image with Docker or Podman.
 # Usage: sh ci/build.sh IMAGE_TAG
 # Optional env: LUCOA_BUILD_FRESH=1 (pull base, no layer cache),
-# LUCOA_EXTRA_APT_PACKAGES, LUCOA_SOURCE_URL, LUCOA_VERSION, GITHUB_SHA.
+# LUCOA_EXTRA_DNF_PACKAGES, LUCOA_SOURCE_URL, LUCOA_VERSION, GITHUB_SHA.
 set -eu
 cd "$(dirname "$0")/.."
 . ci/lib.sh
@@ -17,7 +17,7 @@ set -- --platform linux/amd64 \
 [ -z "${LUCOA_SOURCE_URL:-}" ] || set -- "$@" --label "org.opencontainers.image.source=$LUCOA_SOURCE_URL"
 [ -z "${GITHUB_SHA:-}" ] || set -- "$@" --label "org.opencontainers.image.revision=$GITHUB_SHA"
 [ -z "${LUCOA_VERSION:-}" ] || set -- "$@" --label "org.opencontainers.image.version=$LUCOA_VERSION"
-[ -z "${LUCOA_EXTRA_APT_PACKAGES:-}" ] || set -- "$@" --build-arg "EXTRA_APT_PACKAGES=$LUCOA_EXTRA_APT_PACKAGES"
+[ -z "${LUCOA_EXTRA_DNF_PACKAGES:-}" ] || set -- "$@" --build-arg "EXTRA_DNF_PACKAGES=$LUCOA_EXTRA_DNF_PACKAGES"
 [ "${LUCOA_BUILD_FRESH:-0}" != 1 ] || set -- "$@" --pull --no-cache
 # Podman's default OCI format drops HEALTHCHECK; Docker format keeps it.
 [ "$CONTAINER_ENGINE" != podman ] || set -- "$@" --format docker

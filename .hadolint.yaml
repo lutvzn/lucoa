@@ -1,10 +1,12 @@
 # hadolint configuration for ci/lint.sh.
 failure-threshold: warning
 ignored:
-  # Debian package versions are not pinned: the base image is digest-pinned and
-  # trixie only ships security/stable updates, which the weekly fresh rebuild
+  # Fedora package versions are not pinned: the base image is digest-pinned and
+  # fedora:45 only ships updates for its release, which the weekly fresh rebuild
   # (freshness workflow) is meant to pick up. Pinning exact versions breaks
-  # builds whenever Debian supersedes a package.
+  # builds whenever Fedora supersedes a package.
   - DL3008
-  # The base image defines node as UID/GID 1000; tests assert the numeric IDs.
+  # Fedora packages are not version-pinned here (same reason as DL3008).
+  - DL3041
+  # The Dockerfile creates lutvzn as UID/GID 5997; tests assert the numeric IDs.
   - DL3066

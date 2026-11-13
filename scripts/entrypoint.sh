@@ -7,7 +7,7 @@ umask 077
 # allowed for explicit overrides (--user 0 maintenance shells), with a warning.
 # The default Ovis + SSH workload always runs unprivileged.
 if [ "${1:-}" = bun ] && [ "${2:-}" = /opt/lucoa/ovis/server/index.ts ]; then
-    [ "$(id -u)" -ne 0 ] || fail 'refusing to run the Ovis server as root; use the default node user'
+    [ "$(id -u)" -ne 0 ] || fail 'refusing to run the Ovis server as root; use the default lutvzn user'
     [ "${OVIS_RUNTIME:-}" = herdr-core ] || fail 'OVIS_RUNTIME must be herdr-core'
     if [ -n "${OVIS_TOKEN_FILE:-}" ]; then
         [ -z "${OVIS_TOKEN:-}" ] || fail 'set OVIS_TOKEN or OVIS_TOKEN_FILE, not both'
@@ -60,14 +60,14 @@ if [ "${1:-}" = bun ] && [ "${2:-}" = /opt/lucoa/ovis/server/index.ts ]; then
                 dropbearkey -t ed25519 -f "$ssh_dir/dropbear_ed25519_host_key" >/dev/null
             fi
             chmod 600 "$ssh_dir/dropbear_ed25519_host_key"
-            exec node /usr/local/lib/lucoa/services.mjs "$@"
+            exec /usr/local/lib/lucoa/services.sh "$@"
             ;;
         *) fail 'LUCOA_SSH_ENABLED must be 0 or 1' ;;
     esac
 fi
 
 if [ "$(id -u)" -eq 0 ]; then
-    printf '%s\n' 'lucoa: warning: running a command override as root; prefer the default node user' >&2
+    printf '%s\n' 'lucoa: warning: running a command override as root; prefer the default lutvzn user' >&2
 fi
 # Overrides skip the setup above, but tools such as podman-remote fail when
 # XDG_RUNTIME_DIR names a missing directory. Create it best-effort (private).

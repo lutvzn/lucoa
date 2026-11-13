@@ -13,7 +13,7 @@ EnvironmentFile=%h/.config/lucoa/lucoa.env
 PublishPort=0.0.0.0:7317:7317
 # Key-only SSH as node; provision authorized_keys before connecting.
 PublishPort=0.0.0.0:2222:2222
-Volume=lucoa-home:/home/node
+Volume=lucoa-home:/home/lutvzn
 Volume=lucoa-workspace:/workspace
 RunInit=true
 DropCapability=all

@@ -8,16 +8,11 @@ with persistent storage for your projects, settings, and agent credentials.
 Browser → Ovis → herdr-core → Claude Code / pi
 ```
 
-- **Base:** Node 26 on Debian 13 "trixie" slim (glibc).
-- **Runtime user:** `node`, UID/GID `1000:1000`; no sudo or privileged mode.
+- **Base:** Fedora 45 (glibc, digest pinned) with Node 26 managed by fnm.
+- **Runtime user:** `lutvzn`, UID/GID `5997:5997`; no sudo or privileged mode.
 - **Default workload:** Ovis in the foreground with `OVIS_RUNTIME=herdr-core`.
 - **Also included:** Python 3, uv, uvx, and key-only SSH via Dropbear.
 - **Access:** authenticated browser UI; use the existing Traefik proxy for HTTPS.
-
-> **Existing deployment:** this project was formerly LBoA. The live `lboa`
-> container has not been migrated. Do not start these examples on its occupied
-> port or reuse its volumes in a second running container. See
-> [Existing LBoA deployment](#existing-lboa-deployment) before operating it.
 
 ## Contents
 
@@ -36,7 +31,6 @@ Browser → Ovis → herdr-core → Claude Code / pi
 - [Versions and builds](#versions-and-builds)
 - [CI and publishing (GitHub and Forgejo)](#ci-and-publishing-github-and-forgejo)
 - [Validation](#validation)
-- [Existing LBoA deployment](#existing-lboa-deployment)
 
 ## Setup
 
@@ -82,7 +76,7 @@ runtime environment variables.
 
 **Alternative: a mounted token file.** Direct Docker/Podman deployments also
 accept `OVIS_TOKEN_FILE`. Set either `OVIS_TOKEN` or `OVIS_TOKEN_FILE`, not both.
-The mounted file must be readable by UID 1000 or its rootless host mapping;
+The mounted file must be readable by UID 5997 or its rootless host mapping;
 startup does not repair permissions. The Compose example uses `OVIS_TOKEN`.
 
 ## Choose a deployment method
@@ -93,7 +87,7 @@ interfaces** and uses init, dropped capabilities, and `no-new-privileges`:
 | Host binding | Container port | Purpose |
 | --- | --- | --- |
 | `0.0.0.0:7317` | `7317` | Ovis browser UI |
-| `0.0.0.0:2222` | `2222` | Key-only SSH as `node` |
+| `0.0.0.0:2222` | `2222` | Key-only SSH as `lutvzn` |
 
 **You control reachability.** Restrict host/network ingress and, if desired,
 change the published addresses before starting. `0.0.0.0` is a bind address,
@@ -124,7 +118,7 @@ docker run -d --name lucoa --init --restart=unless-stopped \
   --stop-timeout=20 \
   --env-file .env \
   -p 0.0.0.0:7317:7317 -p 0.0.0.0:2222:2222 \
-  -v lucoa-home:/home/node -v lucoa-workspace:/workspace \
+  -v lucoa-home:/home/lutvzn -v lucoa-workspace:/workspace \
   ghcr.io/lutvzn/lucoa:latest
 ```
 
@@ -171,7 +165,6 @@ Important differences from the direct-run examples:
 - Compose normally creates project-prefixed volumes such as `lucoa_home` and
   `lucoa_workspace`, not `lucoa-home` and `lucoa-workspace`. Switching methods
   does not migrate your data.
-- `LBOA_BIND_IP` remains a fallback when `LUCOA_BIND_IP` is unset.
 
 ### Podman run
 
@@ -186,7 +179,7 @@ podman run -d --name lucoa --init --restart=unless-stopped \
   --stop-timeout=20 \
   --env-file .env \
   -p 0.0.0.0:7317:7317 -p 0.0.0.0:2222:2222 \
-  -v lucoa-home:/home/node -v lucoa-workspace:/workspace \
+  -v lucoa-home:/home/lutvzn -v lucoa-workspace:/workspace \
   ghcr.io/lutvzn/lucoa:latest
 ```
 
@@ -238,12 +231,11 @@ systemctl --user start lucoa.service
 - You decide which interfaces to publish: edit each `PublishPort=` in the unit.
   Both default to `0.0.0.0`; use a specific host IP or `127.0.0.1` if preferred.
   Host/network firewall rules determine which clients can connect.
-  `LUCOA_BIND_IP` and `LBOA_BIND_IP` in its environment file do not control
-  Quadlet publishing.
+  `LUCOA_BIND_IP` in its environment file does not control Quadlet publishing.
 - `Image=ghcr.io/lutvzn/lucoa:latest` selects the image. Change it to pin a release.
   `Pull=missing` pulls only if absent; pull explicitly before restarting to update.
   Private pulls need registry credentials usable by the service's host user.
-- Named volumes are created if absent. They are not the live `lboa-*` volumes.
+- Named volumes are created if absent.
 - Systemd owns restarts (`Restart=always`); there is no Podman restart policy.
   A manual systemd stop stays stopped until another start or boot/login activation.
 
@@ -290,7 +282,7 @@ requires container recreation; these examples do not change the live deployment.
 
 ## SSH and Herdr Desktop
 
-Dropbear runs as **`node` (UID 1000)** on port **2222**, alongside Ovis. It requires
+Dropbear runs as **`lutvzn` (UID 5997)** on port **2222**, alongside Ovis. It requires
 a public key; password login, root login, and port forwarding are disabled.
 It does not require root, extra capabilities, or an unlocked password account.
 There is no bundled SCP/SFTP subsystem; Herdr's `hc connect` uses command/stdio.
@@ -322,9 +314,9 @@ podman exec -i lucoa sh -eu -c 'umask 077; mkdir -p "$HOME/.ssh"; cat >> "$HOME/
 
 Replace `lucoa_ed25519.pub` with the host path to your public key. New keys are
 accepted without a service restart. To revoke a key, remove its line from
-`/home/node/.ssh/authorized_keys`; existing authenticated connections must be
+`/home/lutvzn/.ssh/authorized_keys`; existing authenticated connections must be
 closed separately. Keep `.ssh` mode `0700` and `authorized_keys` mode `0600`,
-owned by UID 1000.
+owned by UID 5997.
 
 ### Alternative: public-key text in an environment variable
 
@@ -367,7 +359,7 @@ files (do not use literal `\n` escapes or split a key across lines).
 Create a host file named `authorized_keys` containing one complete public key per
 line. Mount it at a **separate source path** and set
 `LUCOA_SSH_AUTHORIZED_KEYS_FILE` to that path. The file must be readable by UID
-1000 or its rootless host mapping. Since it contains only public keys, mode
+5997 or its rootless host mapping. Since it contains only public keys, mode
 `0644` is acceptable for the source file; the persistent destination uses `0600`.
 SELinux hosts may need a dedicated `:Z` label on the bind mount.
 
@@ -429,12 +421,12 @@ the persistent server host key.
 ### 2. Verify the host identity and connect
 
 The host key is generated on first startup and persisted at
-`/home/node/.ssh/dropbear_ed25519_host_key`. Do not delete it during upgrades.
+`/home/lutvzn/.ssh/dropbear_ed25519_host_key`. Do not delete it during upgrades.
 Display its public fingerprint through the trusted container engine:
 
 ```sh
 # Use docker exec / docker compose exec instead for Docker deployments.
-podman exec lucoa dropbearkey -y -f /home/node/.ssh/dropbear_ed25519_host_key
+podman exec lucoa dropbearkey -y -f /home/lutvzn/.ssh/dropbear_ed25519_host_key
 ```
 
 On your desktop, add to `~/.ssh/config`:
@@ -443,7 +435,7 @@ On your desktop, add to `~/.ssh/config`:
 Host lucoa
     HostName 10.0.0.50
     Port 2222
-    User node
+    User lutvzn
     IdentityFile ~/.ssh/lucoa_ed25519
     IdentitiesOnly yes
 ```
@@ -480,8 +472,8 @@ Do not accept an unexpected core upgrade without reviewing the image's pins.
 
 ### Copy files with SFTP or scp
 
-The SSH port also serves SFTP (Debian's `sftp-server`, run by Dropbear as
-`node`). Sessions start in `/workspace`; modern `scp` uses SFTP too:
+The SSH port also serves SFTP (Fedora's `sftp-server` from `openssh-server`, run by Dropbear as
+`lutvzn`). Sessions start in `/workspace`; modern `scp` uses SFTP too:
 
 ```sh
 sftp lucoa
@@ -489,7 +481,7 @@ scp ./notes.md lucoa:/workspace/
 scp lucoa:/workspace/report.txt .
 ```
 
-The same key-only rules apply. Files are written as UID 1000 with the
+The same key-only rules apply. Files are written as UID 5997 with the
 container's private umask (`0600` files, `0700` directories).
 
 ### Disable SSH
@@ -545,7 +537,7 @@ in the persisted home; `~/.local/bin` is already on PATH. Downloads need network
 access. Prefer the included system Python; other versions depend on uv's
 platform-specific download availability.
 
-The base is Debian (glibc), so standard `manylinux` wheels apply. Native
+The base is Fedora (glibc), so standard `manylinux` wheels apply. Native
 extensions without wheels need extra build dependencies; compilers, Python
 development headers, and pip are not bundled.
 Recreate virtual environments after an incompatible system Python update, and
@@ -580,11 +572,11 @@ a separate, locked-down account instead, follow
    ```
 
 2. Add these options to the `podman run` command. `keep-id` maps the host
-   account, which owns the socket, to the container's `node` user (UID 1000).
+   account, which owns the socket, to the container's `lutvzn` user (UID 5997).
    `label=disable` allows the socket connection on SELinux hosts:
 
    ```sh
-     --userns=keep-id:uid=1000,gid=1000 \
+     --userns=keep-id:uid=5997,gid=5997 \
      --security-opt label=disable \
      -v "$XDG_RUNTIME_DIR/podman/podman.sock:/run/podman/podman.sock" \
    ```
@@ -592,14 +584,14 @@ a separate, locked-down account instead, follow
    For Quadlet, add to `[Container]`:
 
    ```ini
-   UserNS=keep-id:uid=1000,gid=1000
+   UserNS=keep-id:uid=5997,gid=5997
    SecurityLabelDisable=true
    Volume=%t/podman/podman.sock:/run/podman/podman.sock
    ```
 
    `keep-id` changes how container UIDs map to the host, so start it with
    fresh volumes or check ownership of existing ones first. The entrypoint
-   reports volumes that UID 1000 does not own.
+   reports volumes that UID 5997 does not own.
 
 3. Inside lucoa (browser terminal or SSH):
 
@@ -613,7 +605,7 @@ Builds and containers run on the host, so images, volumes, and bind-mount paths
 refer to **host** storage and paths, not lucoa's filesystem. The build context
 is uploaded from lucoa, so `podman build .` in `/workspace` works as expected.
 `CONTAINER_HOST` defaults to `unix:///run/podman/podman.sock`; SSH shells use
-that default. The client is Debian's 5.4 series; keep the host on a compatible
+that default. The client is Fedora's 6.1 series; keep the host on a compatible
 Podman 5.x. `podman-remote` cannot talk to a Docker daemon.
 
 Docker hosts are not supported for this feature. Running a nested engine inside
@@ -650,15 +642,15 @@ leave a stale mount. Do not add `:z`/`:Z`, because relabeling would fail and is
 not needed with `label=disable`:
 
 ```sh
-  --userns=keep-id:uid=1000,gid=1000 \
+  --userns=keep-id:uid=5997,gid=5997 \
   --security-opt label=disable \
   -v /run/lucoa-builder:/run/podman \
 ```
 
-Quadlet: `UserNS=keep-id:uid=1000,gid=1000`, `SecurityLabelDisable=true`,
+Quadlet: `UserNS=keep-id:uid=5997,gid=5997`, `SecurityLabelDisable=true`,
 `Volume=/run/lucoa-builder:/run/podman`.
 
-**Without `keep-id`**, lucoa's `node` user maps to a subordinate host UID, not
+**Without `keep-id`**, lucoa's `lutvzn` user maps to a subordinate host UID, not
 to the client account. Pass that UID instead: for rootless Podman it is the
 first `/etc/subuid` value of the account that runs lucoa, plus 999. Example:
 `--client 525287` for `lutvzn:524288:65536`. You can pass `--client` more than
@@ -687,17 +679,34 @@ with `--reuse-user`, which also hardens it.
 
 | Container path | Contents | Storage |
 | --- | --- | --- |
-| `/home/node` | Credentials, sessions, configuration, caches | Home volume |
-| `/home/node/.ssh` | SSH authorized public keys and persistent server host key | Home volume |
-| `/home/node/.config/ovis` | Ovis devices, pairing, settings, keys | Home volume |
-| `/home/node/.config/herdr-core` | Core configuration and templates | Home volume |
-| `/home/node/.local/state/herdr-core` | Core records, logs, saved terminal state | Home volume |
+| `/home/lutvzn` | Credentials, sessions, configuration, caches | Home volume |
+| `/home/lutvzn/.ssh` | SSH authorized public keys and persistent server host key | Home volume |
+| `/home/lutvzn/.config/ovis` | Ovis devices, pairing, settings, keys | Home volume |
+| `/home/lutvzn/.config/herdr-core` | Core configuration and templates | Home volume |
+| `/home/lutvzn/.local/state/herdr-core` | Core records, logs, saved terminal state | Home volume |
 | `/workspace` | Projects and working files | Workspace volume |
 | `/tmp/lucoa-runtime` | Private hc runtime sockets | Ephemeral |
 | `/opt/lucoa` | Installed tools and Ovis build | Image |
 
 Home/config/state/runtime directories are private (`0700`). Installed tools stay
 outside persistent mounts so an old home volume does not hide image upgrades.
+
+### Upgrading from the `node` (UID 1000) image
+
+The runtime account is now `lutvzn` (UID/GID 5997) and the `node` account is gone.
+Volumes created by the older image are owned by UID 1000, so the new image cannot
+write to them until ownership is moved. Stop the container, then re-own the volumes
+before starting the new image:
+
+```sh
+podman run --rm --user 0 -v lucoa-home:/home/lutvzn -v lucoa-workspace:/workspace \
+  --entrypoint sh localhost/lucoa:NEW -c \
+  'chown -R 5997:5997 /home/lutvzn /workspace'
+```
+
+Rootless hosts can instead use `podman unshare chown -R 5997:5997` on the volume
+mount points. Keep the old volumes until the new image passes a health check, and
+run `--userns=keep-id:uid=5997,gid=5997` as shown in the host-socket section.
 Ovis's adapter socket lives in its state directory, but sockets are not portable
 persisted process state.
 
@@ -714,13 +723,12 @@ through `tar` in a disposable container. Nothing is written inside the image and
 no host bind mount or root access is needed:
 
 ```sh
-# Use docker instead of podman as appropriate; substitute your volume names
-# (the historical live deployment uses lboa-home / lboa-workspace).
+# Use docker instead of podman as appropriate; substitute your volume names.
 podman stop lucoa
 umask 077
 podman run --rm --cap-drop=ALL --security-opt=no-new-privileges \
-  -v lucoa-home:/home/node:ro ghcr.io/lutvzn/lucoa:latest \
-  tar -C /home/node -cf - . > lucoa-home.tar
+  -v lucoa-home:/home/lutvzn:ro ghcr.io/lutvzn/lucoa:latest \
+  tar -C /home/lutvzn -cf - . > lucoa-home.tar
 podman run --rm --cap-drop=ALL --security-opt=no-new-privileges \
   -v lucoa-workspace:/workspace:ro ghcr.io/lutvzn/lucoa:latest \
   tar -C /workspace -cf - . > lucoa-workspace.tar
@@ -733,8 +741,8 @@ extracting over a volume in use:
 ```sh
 podman volume create lucoa-home-restored
 podman run --rm -i --cap-drop=ALL --security-opt=no-new-privileges \
-  -v lucoa-home-restored:/home/node ghcr.io/lutvzn/lucoa:latest \
-  tar -C /home/node -xf - < lucoa-home.tar
+  -v lucoa-home-restored:/home/lutvzn ghcr.io/lutvzn/lucoa:latest \
+  tar -C /home/lutvzn -xf - < lucoa-home.tar
 ```
 
 The smoke suite exercises this round trip on disposable volumes.
@@ -744,7 +752,7 @@ The smoke suite exercises this round trip on disposable volumes.
 Replace the workspace volume with a bind mount in a local Compose override.
 The runtime user must be able to write it:
 
-- Rootful Docker usually needs ownership compatible with UID/GID 1000.
+- Rootful Docker usually needs ownership compatible with UID/GID 5997.
 - Rootless Podman uses user-namespace mappings; arrange permissions through the
   host mapping or a deliberate `--userns` strategy.
 - SELinux hosts may need a dedicated `:Z` mount label.
@@ -886,12 +894,12 @@ docker compose run --rm lucoa hc --version
 ```
 
 For tasks with no rootless alternative, a command override may run as root
-with `--user 0` (the entrypoint prints a warning). Prefer the default `node`
+with `--user 0` (the entrypoint prints a warning). Prefer the default `lutvzn`
 user. The Ovis server still refuses to start as root. The image has no `sudo`
 or setuid helpers, so root is chosen when the container starts, never gained
 from inside it. Root in a rootless-Podman container is your host account, not
 host root. Avoid running as root against persistent volumes, because files it
-creates there may not be writable by `node` afterwards.
+creates there may not be writable by `lutvzn` afterwards.
 
 Direct disposable shells above do not mount persistent data. Use `exec` on the
 running service when you need its existing workspace and credentials.
@@ -919,24 +927,24 @@ set `LUCOA_IMAGE=lucoa:local` in `.env` after building and run
 `docker compose up -d --pull never`. For Quadlet, set
 `Image=localhost/lucoa:local` and `Pull=never`, then reload/restart the service.
 
-Local builds need access to the container registry, Debian repositories, npm,
+Local builds need access to the container registry, Fedora repositories, nodejs.org, npm,
 GitHub, and `releases.herdr.dev`, but never provider credentials.
 
 `sh ci/build.sh IMAGE` does the same with Docker or Podman (it adds
 `--format docker` for Podman) and refuses non-x86_64 hosts.
 
-### Extra Debian packages
+### Extra Fedora packages
 
 Add packages at build time, for example a compiler toolchain for Python native
 extensions:
 
 ```sh
-podman build --format docker --build-arg EXTRA_APT_PACKAGES="build-essential" \
+podman build --format docker --build-arg EXTRA_DNF_PACKAGES="gcc make" \
   -t localhost/lucoa:full .
-# Or: LUCOA_EXTRA_APT_PACKAGES="build-essential" sh ci/build.sh localhost/lucoa:full
+# Or: LUCOA_EXTRA_DNF_PACKAGES="gcc make" sh ci/build.sh localhost/lucoa:full
 ```
 
-Only Debian package-name characters are accepted. Extra packages must work
+Only Fedora package-name characters are accepted. Extra packages must work
 unprivileged: the build still strips every setuid/setgid bit, and the smoke
 suite still requires that no privilege-escalation tool is present.
 
@@ -963,23 +971,35 @@ API rate limit.
 
 | Component | Pin |
 | --- | --- |
-| Base | `node:26-trixie-slim`, digest pinned in `Dockerfile` |
-| Node / Debian at that digest | 26.13.0 / 13 (trixie) |
+| Base | `fedora:45`, digest pinned in `Dockerfile` |
+| fnm / Node | fnm 1.39.0; Node 26.13.0 under `FNM_DIR=/opt/lucoa/fnm`, tarball SHA-256 pinned in `build/versions.env` |
 | Ovis | 0.4.22, revision `a4ff0c942716602c43362f05c8511984e2bcae44` |
 | herdr-core (`hc`) | 0.1.17, protocol generation 1 |
 | Bun (glibc, x64 baseline) | 1.4.2 |
 | Claude Code (glibc native package) | 2.1.317 |
 | pi | `@earendil-works/pi-coding-agent` 1.5.0 |
-| Python 3 | Debian package; version follows its repository |
-| Dropbear SSH | Debian `dropbear-bin` package; version follows its repository |
+| Python 3 | Fedora package (3.15 series at this digest) |
+| Dropbear SSH | Fedora `dropbear` package; version follows its repository |
 | uv / uvx (glibc) | 0.13.7 |
-| SFTP | Debian `openssh-sftp-server` (`/usr/lib/sftp-server`), no OpenSSH daemon |
-| Extra CLI tools | Debian `openssh-client`, `jq`, `less`, `procps` |
-| podman-remote (`podman`) | Debian `podman-remote` (5.4 series), client only |
+| SFTP | Fedora `openssh-server` sftp-server (`/usr/libexec/openssh/sftp-server`); sshd binary and units removed |
+| Extra CLI tools | Fedora `openssh-clients`, `jq`, `less`, `procps-ng` |
+| podman-remote (`podman`) | Fedora `podman-remote` (6.1 series), client only |
+
+### Node and fnm
+
+Node is managed by [fnm](https://github.com/Schniz/fnm), not installed system-wide.
+`FNM_DIR` is `/opt/lucoa/fnm`, and its `default` alias (Node 26.13.0) is on `PATH`
+for every shell and for Claude Code and pi. fnm 1.39 does not verify Node archives,
+so the image checks the pinned tarball itself before placing it in fnm's layout.
+
+Your dotfiles' fnm bootstrap works unchanged: it finds `/opt/lucoa/bin/fnm` and the
+existing Node 26 installation. Versions installed from inside a running container
+go under `/opt/lucoa` and are lost when the container is recreated; mount a volume
+at `FNM_DIR` if you need them to persist. fnm has no arm64 Linux build pinned here.
 
 Upstream archives are SHA-256 checked against [`build/versions.env`](build/versions.env).
 Agent dependencies use [`build/agents/package-lock.json`](build/agents/package-lock.json);
-Ovis uses its upstream Bun lockfile and patches. Debian repositories are not
+Ovis uses its upstream Bun lockfile and patches. Fedora repositories are not
 snapshotted, so OS builds are not bit-for-bit reproducible.
 
 Bun builds the UI during image construction. Startup runs the production server,
@@ -1044,8 +1064,8 @@ Forgejo uses `.forgejo/workflows` and ignores `.github/workflows` while it exist
    `ssh-keygen`, `sftp`). Set `CONTAINER_ENGINE=podman` in the runner's
    environment to force Podman.
 2. **Security:** host runners have no isolation, so these workflows do not
-   trigger on pull requests. Use a dedicated runner account, never the account
-   running the live `lboa` service, and keep its engine free of production
+   trigger on pull requests. Use a dedicated runner account, never an account
+   running production services, and keep its engine free of production
    containers.
 3. **Registry secrets** (repository or organization): `REGISTRY_TOKEN`, an
    access token with package write scope (required; the automatic workflow token
@@ -1114,27 +1134,3 @@ Rootless Podman execution has been verified. Docker/Compose execution, hosted CI
 Quadlet runtime/boot startup, graphical-browser rendering, real provider login,
 LAN filtering, Traefik HTTPS, long-duration soak, and arm64 need further
 validation. See [`PLAN.md`](PLAN.md) for results and remaining work.
-
-## Existing LBoA deployment
-
-New builds use **lucoa**, `/opt/lucoa`, `LUCOA_BIND_IP`, and `LUCOA_SOAK_SECONDS`.
-The current live deployment deliberately retains its old names:
-
-| Resource | Existing value |
-| --- | --- |
-| Container | `lboa` |
-| Image | `localhost/lboa:python-uv` |
-| Installed tools | `/opt/lboa` |
-| Persistent volumes | `lboa-home`, `lboa-workspace` |
-| Stopped rollback container | `lboa-before-python-uv` |
-| Published address | `127.0.0.1:7317:7317` |
-
-It was started directly with Podman, not Compose. The private `.env` currently
-uses `LBOA_BIND_IP=127.0.0.1`; Compose retains this fallback, with
-`LUCOA_BIND_IP` taking precedence.
-
-Do not rename/redeploy the live instance, replace its volumes, rotate its token,
-or start the rollback container alongside it without approval. A migration
-requires an approved interruption with the existing token and volumes preserved.
-Use the legacy names for live operations; new example volumes do not contain
-its data. See [`AGENTS.md`](AGENTS.md) and [`PLAN.md`](PLAN.md) for the handoff.

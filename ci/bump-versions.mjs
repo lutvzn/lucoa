@@ -191,10 +191,10 @@ const components = {
   async 'base-image'() {
     const dockerfile = join(root, 'Dockerfile');
     let text = readFileSync(dockerfile, 'utf8');
-    const m = text.match(/^FROM node:(26-trixie-slim)@(sha256:[0-9a-f]{64})/m);
-    if (!m) throw new Error('Dockerfile: digest-pinned node:26-trixie-slim FROM line not found');
-    const { token } = await json('https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/node:pull');
-    const response = await http(`https://registry-1.docker.io/v2/library/node/manifests/${m[1]}`, {
+    const m = text.match(/^FROM docker\.io\/library\/fedora:(45)@(sha256:[0-9a-f]{64})/m);
+    if (!m) throw new Error('Dockerfile: digest-pinned fedora:45 FROM line not found');
+    const { token } = await json('https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/fedora:pull');
+    const response = await http(`https://registry-1.docker.io/v2/library/fedora/manifests/${m[1]}`, {
       method: 'HEAD',
       headers: {
         authorization: `Bearer ${token}`,
@@ -203,9 +203,9 @@ const components = {
     });
     const digest = response.headers.get('docker-content-digest');
     if (!digest?.startsWith('sha256:')) throw new Error('Docker Hub did not return an index digest');
-    record(`node:${m[1]}`, m[2].slice(0, 19), digest.slice(0, 19), () => {
+    record(`fedora:${m[1]}`, m[2].slice(0, 19), digest.slice(0, 19), () => {
       const today = new Date().toISOString().slice(0, 10);
-      text = text.replace(m[2], digest).replace(/(index, reviewed )\d{4}-\d{2}-\d{2}/, `$1${today}`);
+      text = text.replace(m[2], digest).replace(/(reviewed )\d{4}-\d{2}-\d{2}/, `$1${today}`);
       writeFileSync(dockerfile, text);
     });
   },

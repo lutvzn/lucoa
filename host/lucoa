@@ -13,7 +13,7 @@
 set -eu
 
 PROG=lucoa
-HEALTH_SCRIPT=/usr/local/lib/lucoa/healthcheck.mjs
+HEALTH_SCRIPT=/usr/local/lib/lucoa/healthcheck.sh
 health_timeout=${LUCOA_HEALTH_TIMEOUT:-120}
 state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/lucoa
 

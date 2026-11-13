@@ -4,9 +4,12 @@
 !build/
 !build/versions.env
 !build/install-upstream.sh
+!build/install-fnm.sh
 !build/agents/
 !build/agents/package.json
 !build/agents/package-lock.json
 !scripts/
 !scripts/entrypoint.sh
-!scripts/healthcheck.mjs
+!scripts/healthcheck.sh
+!scripts/services.sh
+!scripts/ssh-shell.sh

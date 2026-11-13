@@ -12,10 +12,8 @@ This document tracks implementation plans and upstream findings. Source review i
 
 Renamed source, build/test identifiers, Compose service, and documentation to
 **lucoa**. New image paths use `/opt/lucoa`; new configuration uses `LUCOA_*`.
-Compose preserves `LBOA_BIND_IP` as a fallback to avoid changing existing private
-loopback bindings. Historical results below retain the names actually tested.
-The live `lboa` deployment, volumes, credentials, and rollback container were not
-changed. Earlier smoke/build results do not validate the renamed image; rebuild
+Historical results below retain the names actually tested.
+The live deployment, volumes, and credentials were not changed. Earlier smoke/build results do not validate the renamed image; rebuild
 and rerun disposable smoke tests before deployment.
 
 ## Dedicated builder account — 2026-11-12 (deployed)
@@ -40,7 +38,7 @@ and rerun disposable smoke tests before deployment.
 - **Policy:** the user relaxed the strict no-root rule to "prefer rootless solutions" (AGENTS.md). The default user stays `node`. With user approval, the entrypoint allows UID 0 for command overrides (warning on stderr) and still refuses to run the Ovis server as root. The smoke suite checks both. The no-sudo/su and no-setuid checks for the default image are kept.
 - **podman-remote:** Debian `podman-remote` 5.4.2 (client only) is in the image, with `podman` → `podman-remote` in `/opt/lucoa/bin`. `CONTAINER_HOST` points to `/run/podman/podman.sock` in the service and SSH environments. A host socket must be mounted explicitly. Rootless hosts need `keep-id:uid=1000,gid=1000`, and SELinux hosts need `label=disable`. The socket grants full control of that host account's Podman, as documented in README.md.
 - **Test:** `tests/podman-remote.sh` runs a temporary `podman system service` on a private socket. As UID 1000 it checks that `podman info` reports a rootless host, then builds an image `FROM` the image under test, runs it, and removes it. It runs only on Podman runners via `ci/test.sh`; GitHub's Docker runner skips it.
-- **Not verified:** not built or run here (no engine), so host Podman version compatibility is unknown. Live `lboa` is unchanged.
+- **Not verified:** not built or run here (no engine), so host Podman version compatibility is unknown. The live deployment is unchanged.
 
 ## CI, pin freshness, SFTP/tools — 2026-11-06 (not built)
 
@@ -50,7 +48,7 @@ and rerun disposable smoke tests before deployment.
 - **Image:** added `openssh-client`, `openssh-sftp-server` (Debian Dropbear's `SFTPSERVER_PATH` is `/usr/lib/sftp-server`), `jq`, `less`, and `procps`, plus an `EXTRA_APT_PACKAGES` build argument limited to package-name characters. The healthcheck already requires the herdr-core backend (`body.herdr`), so it is unchanged.
 - **Tests:** the smoke suite checks the new tools and a tar backup/restore round trip. The SSH suite checks SFTP upload/download, start directory, and file ownership.
 - **Verified here:** ShellCheck and hadolint (pinned binaries) passed. Shell/JS/Python syntax and YAML parsing passed for all workflows. Publish tag selection was tested with a stub engine. Bump `--write` was tested on a scratch copy.
-- **Not verified:** no container engine was available, so nothing was built, smoke-tested, scanned, or published. Neither GitHub nor Forgejo workflows have run. Cosign signing/attestation, registry pushes, the Forgejo host-runner setup, and real SFTP sessions are untested. Live `lboa` is unchanged.
+- **Not verified:** no container engine was available, so nothing was built, smoke-tested, scanned, or published. Neither GitHub nor Forgejo workflows have run. Cosign signing/attestation, registry pushes, the Forgejo host-runner setup, and real SFTP sessions are untested. The live deployment is unchanged.
 
 ## Debian base migration — 2026-11-04 (not built)
 
@@ -60,7 +58,7 @@ and rerun disposable smoke tests before deployment.
 - Bun 1.4.2 switched to `bun-linux-x64-baseline` / `bun-linux-aarch64` (glibc); uv 0.13.7 switched to `*-unknown-linux-gnu`. SHA-256 values match upstream `SHASUMS256.txt` / `sha256.sum` and were confirmed by download. herdr-core 0.1.17 archives are static ELF (no interpreter) and keep their pins. Claude Code's lockfile already includes the glibc `@anthropic-ai/claude-code-linux-{x64,arm64}` packages.
 - Smoke test now checks `/etc/debian_version` instead of `/etc/alpine-release`.
 - System Python moves from Alpine 3.14 to Debian's 3.13 series; recreate virtual environments made with the Alpine image. Standard manylinux wheels now apply.
-- **Pending:** image build, both smoke suites, image size comparison, arm64, and confirming the stripped setuid bits do not affect any bundled tool. No container engine was available in the authoring session; nothing was built, published, or deployed. Live `lboa` is unchanged.
+- **Pending:** image build, both smoke suites, image size comparison, arm64, and confirming the stripped setuid bits do not affect any bundled tool. No container engine was available in the authoring session; nothing was built, published, or deployed. The live deployment is unchanged.
 - Historical sections below describe the Alpine image as tested.
 
 ## SSH addition — 2026-11-04 (not deployed)
@@ -70,7 +68,7 @@ and rerun disposable smoke tests before deployment.
 - Added `LUCOA_SSH_AUTHORIZED_KEYS` for public-key text, including newline-separated keys. It replaces the persisted authorized key set; empty/unset input preserves existing keys. Rejects whitespace-only text, private-key PEM markers, and setting both nonempty text/file inputs. Does not print supplied keys, and unsets the text before starting services.
 - README now documents exec-based provisioning, environment files/exported variables, and mounted public-key files for direct run, Compose, and Quadlet, including replacement/revocation behavior and runtime UID permissions.
 - Switched deployment examples, Compose, and Quadlet to `ghcr.io/lutvzn/lucoa:latest`; Compose supports `LUCOA_IMAGE`. Local builds and immutable-tag/digest choices remain documented. Quadlet uses `Pull=missing`, with explicit pull/restart for updates. No GHCR image was published; users need a tag built from this source to use the new features.
-- Rebuilt `localhost/lucoa:ssh` (image ID `3db1d304ceba869614aa6a91795a03457dec64a7338759433256106bfcdc5cb5`) and reran the full existing smoke suite and expanded SSH suite successfully. Additional checks passed for environment-based multiline key login, preservation without input, and rejection of conflicting/blank/private-key text inputs. Live `lboa`, volumes, token, port bindings, firewall, and Traefik were untouched.
+- Rebuilt `localhost/lucoa:ssh` (image ID `3db1d304ceba869614aa6a91795a03457dec64a7338759433256106bfcdc5cb5`) and reran the full existing smoke suite and expanded SSH suite successfully. Additional checks passed for environment-based multiline key login, preservation without input, and rejection of conflicting/blank/private-key text inputs. The live deployment, volumes, token, port bindings, firewall, and Traefik were untouched.
 
 ### Initial SSH implementation
 
@@ -89,24 +87,24 @@ and rerun disposable smoke tests before deployment.
 
 - Added Alpine `python3` (resolved to **3.14.10**) without pip; retained the required digest-pinned Node 26 Alpine base and non-root runtime.
 - Added **uv / uvx 0.13.7**, using upstream musl release archives with SHA-256 pins for amd64 and arm64. Only amd64 was executed.
-- Built **`localhost/lboa:python-uv`**, image ID `022b609f8506629bc4043c43e3e82c8b930dd26d51e874fdc96811c8b0b3e1bc`.
+- Built a Python/uv image variant (since removed).
 - Full disposable-container smoke suite passed, including the new network-disabled Python test: UID 1000, no pip, uv virtual environment creation, local wheel installation/import, and `uv run`. Existing Ovis auth, terminal/reconnect, persistence, and shutdown tests passed again. ShellCheck (`-x`), shell syntax, and Python AST checks passed.
-- **Deployed with user approval:** replaced live `lboa` with `localhost/lboa:python-uv`. Preserved the exact token, named volumes, `127.0.0.1:7317` binding, init, `unless-stopped`, dropped capabilities, and no-new-privileges. Verified healthy, UID 1000, Python/uv/uvx versions, writable home/workspace, host-port UI/backend, anonymous API/WebSocket-route rejection, cookie login, and Claude/pi detection.
-- Old container retained **stopped** as `lboa-before-python-uv` for rollback; never start both against the same volumes/port. `localhost/lboa:local` still points to the previous image. No token rotation, firewall, or Traefik changes were made.
+- **Deployed with user approval** to the then-live service. Preserved the exact token, named volumes, `127.0.0.1:7317` binding, init, `unless-stopped`, dropped capabilities, and no-new-privileges. Verified healthy, UID 1000, Python/uv/uvx versions, writable home/workspace, host-port UI/backend, anonymous API/WebSocket-route rejection, cookie login, and Claude/pi detection.
+- A rollback container was kept stopped during that change; it was later removed. No token rotation, firewall, or Traefik changes were made.
 - User reports the existing browser setup is working; no additional graphical/provider-authenticated checks were performed by the agent for this change. Python registry downloads, native-extension builds, and arm64 execution were not tested.
 
 ## Implementation results — 2026-11-03
 
-- Built **`localhost/lboa:local`** with rootless Podman on **linux/amd64**, using Docker image format to preserve HEALTHCHECK metadata. Final local image ID starts `105ecf28619e`; uncompressed image size is approximately **1.12 GB** (mostly upstream binaries/dependencies).
+- Built the earlier local image (since removed) with rootless Podman on **linux/amd64**, using Docker image format to preserve HEALTHCHECK metadata. Final local image ID starts `105ecf28619e`; uncompressed image size is approximately **1.12 GB** (mostly upstream binaries/dependencies).
 - Full smoke suite passed, including UID 1000 execution, CLI versions, root/no-token rejection, no sudo/doas/su on PATH, no setuid/setgid files under standard system binary paths, and capability-dropped/no-new-privileges operation.
 - Ovis served its built UI, reported a usable herdr-core backend, rejected anonymous API and WebSocket access and spoofed identity headers, accepted browser-style cookie login, and detected Claude/pi as installed on PATH with successful version probes.
 - Created/closed a workspace through the web API and tested live terminal input/output through authenticated WebSockets. A shell command continued while the client disconnected, and its output was visible after reconnect.
 - Recreated the container with the same home/workspace volumes, confirmed saved files survived, and reran the authenticated HTTP/WebSocket workflow using file-based token startup. Graceful shutdown exited with code 0.
 - A **60-second readiness soak** passed **30 checks**; observed server RSS was **77,704 -> 76,944 KiB**. This is a short observation, not evidence of 24-hour stability or absence of leaks.
 - ShellCheck, POSIX-shell syntax checks, JavaScript syntax checks, and Compose/CI YAML parsing passed. No Docker daemon or Compose provider is installed here, so the Compose service itself was not launched; CI has been added but not run on GitHub.
-- Smoke containers and disposable volumes were removed. Subsequently started the persistent test service **`lboa`** with rootless Podman, init, `restart=unless-stopped`, dropped capabilities, and no-new-privileges. It uses named volumes `lboa-home` / `lboa-workspace` and a generated token in the ignored mode-0600 `.env` file.
-- The live test service is bound only to **`127.0.0.1:7317`**, not the LAN. Host firewall queries require authorization, so the required LAN source filtering could not be verified. No host firewall or Traefik changes were made. Use a local browser or SSH tunnel until LAN filtering is confirmed.
-- Live host-port checks passed: UI response, usable core backend, anonymous API rejection, cookie-based token login, and installed Claude/pi detection. Explicit `podman healthcheck run lboa` succeeded; container reports running/healthy as UID 1000. Verified only the IPv4 loopback listener on port 7317.
+- Smoke containers and disposable volumes were removed. Subsequently started a persistent test service with rootless Podman, init, `restart=unless-stopped`, dropped capabilities, and no-new-privileges. It used named volumes and a generated token in the ignored mode-0600 `.env` file; those resources were later removed.
+- The test service was bound only to **`127.0.0.1:7317`**, not the LAN. Host firewall queries require authorization, so the required LAN source filtering could not be verified. No host firewall or Traefik changes were made. Use a local browser or SSH tunnel until LAN filtering is confirmed.
+- Live host-port checks passed: UI response, usable core backend, anonymous API rejection, cookie-based token login, and installed Claude/pi detection. An explicit healthcheck succeeded; container reports running/healthy as UID 1000. Verified only the IPv4 loopback listener on port 7317.
 - Still pending: real provider-authenticated workflows and agent launch UX, graphical-browser rendering, Traefik HTTPS routing, LAN source filtering, bind-mount deployment permissions, long-duration soak, arm64 validation, and image publication.
 
 See README.md for build, authentication, rootless Podman/Compose startup, persistence, and security instructions.
@@ -233,9 +231,10 @@ Implementation files:
 | `tests/smoke.sh` | Automated checks for the image's runtime contract. |
 | `compose.yaml` | Always-on example with restart policy, init, explicit LAN-IP port publishing, persistent mounts, and runtime configuration. |
 | `scripts/entrypoint.sh` | Non-root/token/path validation and exec of server or command override. |
-| `scripts/healthcheck.mjs` | Bounded public health probe checking backend readiness and auth gating. |
-| `tests/http.mjs` | Credential-free authenticated API/WebSocket terminal tests. |
-| `tests/soak.mjs` | Optional bounded readiness soak with server RSS observations. |
+| `scripts/healthcheck.sh` | Bounded public health probe (curl + jq) checking backend readiness and auth gating. |
+| `scripts/services.sh` | Bash supervisor for Dropbear and the container command; unexpected exit stops both. |
+| `tests/http.sh` | Credential-free authenticated API and WebSocket terminal tests in bash (bash `/dev/tcp` WebSocket client). |
+| `tests/soak.sh` | Optional bounded readiness soak with server RSS observations (bash, curl, jq). |
 | `build/versions.env` | Archive version/revision/checksum pins. |
 | `build/agents/package{,-lock}.json` | Agent package and transitive dependency pins. |
 | `.github/workflows/container.yml` | amd64 build and credential-free smoke CI; not yet run on GitHub. |
@@ -323,3 +322,26 @@ Additional validation:
 4. Run longer active-workload soak/recovery tests and execute CI on the hosted runner.
 5. Validate any additional architectures before declaring support.
 6. Choose registry/release details and add gated image publication.
+
+## Fedora base migration — 2026-11-13 (built, smoke passed)
+
+- Base: `docker.io/library/fedora:45@sha256:a7d72ba2745b100a3351087472e5ee7b2450af7cf331e7673007e3817612839c`, replacing `node:26-trixie-slim`. Fedora 45 (digest `a7d72ba2…`) was also available; 44 was chosen as the older, established release.
+- Node 26.13.0 from nodejs.org, SHA-256 pinned for x64 and arm64, installed to `/usr/local` by `build/install-node.sh`.
+- Packages: `bash ca-certificates curl git ripgrep python3 dropbear openssh-clients openssh-server xz libatomic jq less procps-ng podman-remote`; `unzip` in the build stage. `sudo` removed with `rpm -e --nodeps`; `sshd` binary and units removed.
+- The smoke check for forbidden tools now fails on any present `sudo`, `doas`, `su`, or `sshd`. The previous `! command -v` form did not fail under `sh -e`, which is how `sudo` went unnoticed.
+- Results: `tests/smoke.sh` and `tests/ssh.sh` pass against `localhost/lucoa:fedora-test`.
+- Not done: arm64 execution, hosted CI, and Node pin bumps in `ci/bump-versions.mjs`. The live deployment was not changed.
+
+## Node account removal — 2026-11-13
+
+- The `node` account is deleted. `lutvzn` (UID/GID 5997, home `/home/lutvzn`) runs the image, owns `/opt/lucoa` and `/workspace`, and is the SSH login.
+- Updated: Dockerfile, entrypoint and SSH shell paths, smoke/SSH/podman-remote/python tests, compose, Quadlet example, `.env.example`, `host/setup-builder.sh`, README (including an upgrade note for UID 1000 volumes), AGENTS.md.
+- Passed on `localhost/lucoa:lutvzn-only`: smoke, SSH, podman-remote (now runs on this host), lint. The volume re-own procedure was tested on a throwaway volume.
+- Pending: migrate the live deployment only with approval.
+
+## fnm-managed Node — 2026-11-13
+
+- Node 26.13.0 is installed under fnm (`FNM_DIR=/opt/lucoa/fnm`, `default` alias on `PATH`), with fnm 1.39.0 at `/opt/lucoa/bin/fnm`. Both are checksum-pinned (amd64 only; fnm publishes no arm64 Linux zip here).
+- fnm 1.39 downloads Node without checking SHA-256 sums, so `build/install-fnm.sh` verifies the pinned tarball and places it in fnm's layout.
+- Updated: `build/install-fnm.sh` (replaces `install-node.sh`), Dockerfile, `scripts/ssh-shell.sh`, `.dockerignore`, `ci/lint.sh`, smoke test (fnm and node path checks), README, AGENTS.md.
+- Verified on `localhost/lucoa:fnm-test`: smoke, SSH and podman-remote suites pass. Not tested: the dotfiles bootstrap itself, and `fnm install 26` against the live index.

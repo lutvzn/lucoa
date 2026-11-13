@@ -11,7 +11,7 @@ services:
     ports:
       # Interface binding is NOT a source-subnet firewall. See README.md.
       # Honor the old setting so existing loopback-only .env files stay local.
-      - "${LUCOA_BIND_IP:-${LBOA_BIND_IP:-0.0.0.0}}:7317:7317"
+      - "${LUCOA_BIND_IP:-0.0.0.0}:7317:7317"
       # Key-only SSH uses all host IPv4 interfaces, independently of the browser binding.
       - "0.0.0.0:2222:2222"
     environment:
@@ -23,7 +23,7 @@ services:
       OVIS_TELEMETRY: "0"
     volumes:
       # Installations live in /opt/lucoa, not in these persistent mounts.
-      - home:/home/node
+      - home:/home/lutvzn
       - workspace:/workspace
 
 volumes:
