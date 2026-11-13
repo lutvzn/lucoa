@@ -27,6 +27,14 @@ and rerun disposable smoke tests before deployment.
 - **Reboot verified (user-run, 2026-11-12):** the socket directory and its ACLs were recreated, the lingering user manager was active, lucoa reached the builder's rootless Podman with no `lutvzn` containers visible, and `lucoa`/`traefik`/`forgejo-runner` were up.
 - **Not verified:** the memory/task limits under real pressure, and Docker hosts (not supported).
 
+## Host management CLI — 2026-11-12 (not installed)
+
+**Goal:** one host command (`lucoa`) for the Quadlet: status, start/stop/restart, logs, health, safe per-service update with rollback, and validated Quadlet edits.
+
+**Verified** (disposable `lucoa-clitest` Quadlet from the current image, removed afterwards): start/restart wait for health; stop; update with an unchanged image is a no-op; `--check` reports without restarting; update to a new image tags the previous one and restarts healthy; `rollback` restores it; an update to an image whose server never starts fails the health wait and rolls back automatically (exit 1); `edit` installs a valid change with a `.bak`, rejects an invalid key, and ignores no-op edits; `install` copies with mode 0755. Read-only `status`, `health`, `logs`, `shell` passed against live `lucoa`. ShellCheck and `ci/lint.sh` passed.
+
+**Not verified:** a real registry pull via `update` (tests replaced `pull`), interactive `edit`/`confirm` prompts, `logs --unit` (the user journal isn't readable on this host), and interaction with `podman-auto-update.timer`.
+
 ## podman-remote and rootless preference — 2026-11-06 (not built)
 
 - **Policy:** the user relaxed the strict no-root rule to "prefer rootless solutions" (AGENTS.md). The default user stays `node`. With user approval, the entrypoint allows UID 0 for command overrides (warning on stderr) and still refuses to run the Ovis server as root. The smoke suite checks both. The no-sudo/su and no-setuid checks for the default image are kept.

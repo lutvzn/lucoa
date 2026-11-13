@@ -1,0 +1,336 @@
+#!/bin/sh
+# lucoa: manage a rootless Podman Quadlet deployment of lucoa from the HOST.
+#
+#   lucoa status | start | stop | restart | update | rollback | logs | health
+#   lucoa shell | edit | reload | install | help
+#
+# Run as the host user that owns the Quadlet (never root, never inside lucoa).
+# Settings (environment):
+#   LUCOA_QUADLET         Quadlet file (default: first lucoa.container found
+#                         under ~/.config/containers/systemd)
+#   LUCOA_HEALTH_TIMEOUT  Seconds to wait for a healthy start (default: 120)
+#   LUCOA_INSTALL_DIR     Where `lucoa install` puts the command (~/.local/bin)
+set -eu
+
+PROG=lucoa
+HEALTH_SCRIPT=/usr/local/lib/lucoa/healthcheck.mjs
+health_timeout=${LUCOA_HEALTH_TIMEOUT:-120}
+state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/lucoa
+
+usage() {
+    cat <<'EOF'
+Usage: lucoa COMMAND [options]
+
+Service:
+  status              Service, container, image, health and builder socket
+  start | stop        Start or stop the systemd service
+  restart             Restart the service and wait until it is healthy
+  logs [-f] [-n N]    Container output (default: last 100 lines)
+    --unit            systemd unit journal instead (start/stop/restart events)
+  health              Run the Ovis/backend readiness check
+
+Image:
+  update              Pull the Quadlet's image; if it changed, restart and wait
+                      for health, rolling back to the previous image on failure
+    --check           Only pull and report; do not restart
+    --force           Restart even if the image did not change
+  rollback            Return to the image that ran before the last update
+
+Configuration:
+  edit                Edit the Quadlet safely: validate, install, reload, and
+                      offer a restart
+  reload              Validate the Quadlet and reload systemd after a manual edit
+
+Other:
+  shell [CMD...]      Shell (or CMD) inside the container as its default user
+  install             Copy this command to ~/.local/bin/lucoa
+  help                Show this help
+
+Stopping, restarting or updating ends agents running inside lucoa.
+EOF
+}
+
+say() { printf '%s\n' "$*"; }
+note() { printf '==> %s\n' "$*"; }
+warn() { printf '%s: warning: %s\n' "$PROG" "$*" >&2; }
+die() { printf '%s: error: %s\n' "$PROG" "$*" >&2; exit 1; }
+
+[ "$(id -u)" != 0 ] || die 'run as the host user that owns the Quadlet, not root'
+[ ! -e /run/.containerenv ] && [ ! -e /.dockerenv ] || die 'run this on the host, not inside a container'
+command -v podman >/dev/null || die 'podman not found'
+
+# ---- Quadlet discovery ------------------------------------------------------
+
+find_quadlet() {
+    if [ -n "${LUCOA_QUADLET:-}" ]; then
+        [ -f "$LUCOA_QUADLET" ] || die "LUCOA_QUADLET not found: $LUCOA_QUADLET"
+        printf '%s\n' "$LUCOA_QUADLET"
+        return
+    fi
+    dir=${XDG_CONFIG_HOME:-$HOME/.config}/containers/systemd
+    q=$(find "$dir" -name lucoa.container -type f 2>/dev/null | sort | head -n 1)
+    [ -n "$q" ] || die "no lucoa.container under $dir (set LUCOA_QUADLET)"
+    printf '%s\n' "$q"
+}
+
+# quadlet_key KEY: last value of KEY= in the [Container] section.
+quadlet_key() {
+    awk -v k="$1" '
+        /^[[:space:]]*\[/ { sec = $0; gsub(/[[:space:]]/, "", sec); next }
+        sec == "[Container]" && index($0, k "=") == 1 { v = substr($0, length(k) + 2) }
+        END { print v }' "$quadlet"
+}
+
+quadlet=$(find_quadlet)
+base=${quadlet##*/}
+unit=${base%.container}.service
+image=$(quadlet_key Image)
+container=$(quadlet_key ContainerName)
+rollback_tag=localhost/${base%.container}:rollback
+[ -n "$container" ] || container=systemd-${base%.container}
+[ -n "$image" ] || die "no Image= in $quadlet"
+
+quadlet_bin=
+for q in /usr/libexec/podman/quadlet /usr/lib/podman/quadlet; do
+    [ -x "$q" ] && { quadlet_bin=$q; break; }
+done
+
+# ---- helpers ----------------------------------------------------------------
+
+sctl() { systemctl --user "$@"; }
+
+running_image_id() {
+    podman container inspect "$container" --format '{{.Image}}' 2>/dev/null || true
+}
+image_id() { podman image inspect "$1" --format '{{.Id}}' 2>/dev/null || true; }
+short() { printf '%.12s\n' "$1"; }
+
+describe_image() {
+    podman image inspect "$1" --format \
+        '{{.Created.Format "2006-01-02 15:04"}} UTC  revision {{printf "%.7s" (or (index .Labels "org.opencontainers.image.revision") "unknown")}}' \
+        2>/dev/null || say unknown
+}
+
+health_once() {
+    podman exec "$container" node "$HEALTH_SCRIPT" >/dev/null 2>&1
+}
+
+# Wait for the unit to be active and the readiness check to pass.
+wait_healthy() {
+    note "Waiting up to ${health_timeout}s for $container to become healthy"
+    waited=0
+    while [ "$waited" -lt "$health_timeout" ]; do
+        if sctl is-active --quiet "$unit" && health_once; then
+            say "    healthy after ${waited}s"
+            return 0
+        fi
+        sctl is-failed --quiet "$unit" && break
+        sleep 3
+        waited=$((waited + 3))
+    done
+    warn "$container is not healthy (unit: $(sctl is-active "$unit" 2>/dev/null || true))"
+    return 1
+}
+
+restart_service() {
+    note "Restarting $unit"
+    sctl restart "$unit"
+    wait_healthy
+}
+
+confirm() {
+    [ -t 0 ] || return 1
+    printf '%s [y/N] ' "$1"
+    read -r answer || return 1
+    case $answer in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+# validate_quadlet FILE: run the Quadlet generator on FILE alone.
+validate_quadlet() {
+    [ -n "$quadlet_bin" ] || { warn 'quadlet generator not found; skipping validation'; return 0; }
+    vdir=$(mktemp -d)
+    cp "$1" "$vdir/$base"
+    # Copy the networks, volumes, pods and images the container may reference.
+    find "${XDG_CONFIG_HOME:-$HOME/.config}/containers/systemd" -type f \
+        \( -name '*.network' -o -name '*.volume' -o -name '*.pod' -o -name '*.image' -o -name '*.build' \) \
+        -exec cp {} "$vdir/" \; 2>/dev/null || true
+    if out=$(QUADLET_UNIT_DIRS=$vdir "$quadlet_bin" -dryrun -user 2>&1) \
+        && printf '%s\n' "$out" | grep -q "^---${base%.container}.service---"; then
+        rm -rf "$vdir"
+        return 0
+    fi
+    rm -rf "$vdir"
+    printf '%s\n' "$out" | grep -iv '^---' | grep -i 'error\|unsupported\|invalid' >&2 || printf '%s\n' "$out" >&2
+    return 1
+}
+
+# ---- commands ---------------------------------------------------------------
+
+cmd_status() {
+    say "Quadlet:   $quadlet"
+    say "Service:   $unit $(sctl is-active "$unit" 2>/dev/null || true) (since $(sctl show "$unit" -p ActiveEnterTimestamp --value 2>/dev/null || say '?'))"
+    say "Container: $(podman ps -a --filter "name=^${container}\$" --format '{{.Names}} {{.Status}}' | head -n 1)"
+    rid=$(running_image_id)
+    say "Image:     $image"
+    if [ -n "$rid" ]; then
+        say "  running  $(short "$rid")  $(describe_image "$rid")"
+        lid=$(image_id "$image")
+        if [ -n "$lid" ] && [ "$lid" != "$rid" ]; then
+            say "  local    $(short "$lid")  $(describe_image "$lid")  (newer image pulled; run: lucoa restart)"
+        fi
+    fi
+    rb=$(image_id "$rollback_tag")
+    [ -z "$rb" ] || say "  rollback $(short "$rb")  $(describe_image "$rb")"
+    if health_once; then say 'Health:    ok'; else say 'Health:    FAILING'; fi
+    if podman container exists "$container" 2>/dev/null; then
+        b=$(podman exec "$container" sh -c '[ -S /run/podman/podman.sock ] || exit 0
+            timeout 10 podman info --format "rootless={{.Host.Security.Rootless}} {{.Store.GraphRoot}}" 2>/dev/null' 2>/dev/null || true)
+        case $b in
+            rootless=*) say "Builder:   ${b#rootless=}" ;;
+            *) say 'Builder:   not mounted or not reachable' ;;
+        esac
+    fi
+}
+
+cmd_update() {
+    check=0 force=0
+    for a in "$@"; do
+        case $a in
+            --check) check=1 ;;
+            --force) force=1 ;;
+            *) die "update: unknown option $a" ;;
+        esac
+    done
+    old=$(running_image_id)
+    [ -n "$old" ] || old=$(image_id "$image")
+    note "Pulling $image"
+    podman pull --quiet "$image" >/dev/null
+    new=$(image_id "$image")
+    if [ "$new" = "$old" ] && [ "$force" = 0 ]; then
+        say "Up to date: $(short "$new")  $(describe_image "$new")"
+        return 0
+    fi
+    say "    current $(short "$old")  $(describe_image "$old")"
+    say "    new     $(short "$new")  $(describe_image "$new")"
+    if [ "$check" = 1 ]; then
+        say 'Not restarting (--check). Apply with: lucoa update'
+        return 0
+    fi
+    if [ -n "$old" ] && [ "$old" != "$new" ]; then
+        podman tag "$old" "$rollback_tag"
+        mkdir -p "$state_dir"
+        printf '%s\n' "$old" > "$state_dir/rollback-image"
+        say "    saved previous image as $rollback_tag"
+    fi
+    if restart_service; then
+        note "Updated to $(short "$new")"
+        return 0
+    fi
+    if [ -n "$old" ] && [ "$old" != "$new" ]; then
+        warn 'new image failed its health check; rolling back'
+        podman tag "$old" "$image"
+        restart_service || die "rollback also failed; see: lucoa logs"
+        die "update failed; rolled back to $(short "$old"). See: lucoa logs"
+    fi
+    die 'restart failed; see: lucoa logs'
+}
+
+cmd_rollback() {
+    rb=$(image_id "$rollback_tag")
+    [ -n "$rb" ] || die "no rollback image ($rollback_tag); nothing to roll back to"
+    cur=$(running_image_id)
+    [ "$rb" != "$cur" ] || die "already running the rollback image $(short "$rb")"
+    note "Rolling back $image to $(short "$rb")  $(describe_image "$rb")"
+    podman tag "$rb" "$image"
+    restart_service || die 'rollback image is not healthy; see: lucoa logs'
+    say "Note: Pull=/AutoUpdate= may move $image forward again; run lucoa update when fixed."
+}
+
+cmd_logs() {
+    follow='' lines=100 source=container
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -f|--follow) follow=-f; shift ;;
+            -n|--lines) [ $# -ge 2 ] || die 'logs: -n needs a number'; lines=$2; shift 2 ;;
+            --unit) source=unit; shift ;;
+            *) die "logs: unknown option $1" ;;
+        esac
+    done
+    case $lines in ''|*[!0-9]*) die 'logs: -n needs a number' ;; esac
+    if [ "$source" = unit ]; then
+        # shellcheck disable=SC2086
+        exec journalctl --user -u "$unit" -n "$lines" --no-pager $follow
+    fi
+    # shellcheck disable=SC2086
+    exec podman logs --tail "$lines" $follow "$container"
+}
+
+cmd_edit() {
+    editor=${VISUAL:-${EDITOR:-vi}}
+    tmp=$(mktemp "${TMPDIR:-/tmp}/lucoa-quadlet.XXXXXX")
+    cp "$quadlet" "$tmp"
+    while :; do
+        $editor "$tmp"
+        if cmp -s "$tmp" "$quadlet"; then
+            rm -f "$tmp"; say 'No changes.'; return 0
+        fi
+        if validate_quadlet "$tmp"; then break; fi
+        warn 'the edited Quadlet does not validate'
+        confirm 'Edit again?' || { rm -f "$tmp"; die 'discarded changes'; }
+    done
+    cp "$quadlet" "$quadlet.bak"
+    cat "$tmp" > "$quadlet"
+    rm -f "$tmp"
+    note "Installed (previous version: $quadlet.bak); reloading systemd"
+    sctl daemon-reload
+    if confirm "Restart $unit now to apply? This ends running agents."; then
+        restart_service
+    else
+        say 'Apply later with: lucoa restart'
+    fi
+}
+
+cmd_reload() {
+    validate_quadlet "$quadlet" || die "$quadlet does not validate"
+    sctl daemon-reload
+    say "Reloaded. Apply with: lucoa restart"
+}
+
+cmd_shell() {
+    tty=
+    [ -t 0 ] && [ -t 1 ] && tty=-t
+    if [ $# -eq 0 ]; then
+        exec podman exec -i $tty "$container" bash -l
+    fi
+    exec podman exec -i $tty "$container" "$@"
+}
+
+cmd_install() {
+    dest_dir=${LUCOA_INSTALL_DIR:-$HOME/.local/bin}
+    src=$(readlink -f "$0")
+    mkdir -p "$dest_dir"
+    # A copy, not a symlink: the repository may be writable from inside lucoa,
+    # and this command runs with the host user's full privileges.
+    install -m 0755 "$src" "$dest_dir/lucoa"
+    say "Installed $dest_dir/lucoa (a copy of $src). Rerun after updating the repository."
+    case ":$PATH:" in *":$dest_dir:"*) ;; *) warn "$dest_dir is not on PATH" ;; esac
+}
+
+cmd=${1:-help}
+[ $# -eq 0 ] || shift
+case $cmd in
+    status) cmd_status ;;
+    start) note "Starting $unit"; sctl start "$unit"; wait_healthy ;;
+    stop) note "Stopping $unit"; sctl stop "$unit" ;;
+    restart) restart_service ;;
+    update) cmd_update "$@" ;;
+    rollback) cmd_rollback ;;
+    logs) cmd_logs "$@" ;;
+    health) if health_once; then say ok; else say FAILING; exit 1; fi ;;
+    edit) cmd_edit ;;
+    reload) cmd_reload ;;
+    shell|exec) cmd_shell "$@" ;;
+    install) cmd_install ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; die "unknown command: $cmd" ;;
+esac

@@ -821,7 +821,7 @@ Updates are image-driven. Keep the same environment file and volumes.
 | Docker run | `docker pull ghcr.io/lutvzn/lucoa:latest`; `docker stop lucoa && docker rm lucoa`; repeat the run command |
 | Docker Compose | `docker compose pull`, then `docker compose up -d` (retains the binding configured in `.env`) |
 | Podman run | `podman pull ghcr.io/lutvzn/lucoa:latest`; `podman stop lucoa && podman rm lucoa`; repeat the run command |
-| Quadlet | Pull the configured image as the service's host user; `systemctl --user restart lucoa.service` |
+| Quadlet | `lucoa update` (see [Host management command](#host-management-command-quadlet)), or pull the configured image as the service's host user and `systemctl --user restart lucoa.service` |
 
 If you pinned a tag/digest, update the image reference deliberately. Use the same
 Compose override files during updates if you configured a public-key file mount.
@@ -834,6 +834,44 @@ Update checked-in pins/lockfiles to change bundled tool versions. Ovis automatic
 updates and Claude background updates are disabled; startup bypasses Ovis's
 managed updater. Manual installation can still modify user-owned tools.
 Recreating the container restores image-provided tools outside persistent mounts.
+
+### Host management command (Quadlet)
+
+`host/lucoa` is a small POSIX shell CLI for a rootless Quadlet deployment. Run
+it on the host as the user that owns the Quadlet, never as root and never inside
+lucoa. It reads `Image=` and `ContainerName=` from the first `lucoa.container`
+under `~/.config/containers/systemd` (override with `LUCOA_QUADLET`).
+
+```sh
+sh host/lucoa install        # copies the script to ~/.local/bin/lucoa
+lucoa status                 # unit, container, running vs pulled image, health, builder socket
+lucoa start | stop | restart # systemctl --user; start/restart wait for the health check
+lucoa logs [-f] [-n N]       # container output (podman logs); --unit for the systemd journal
+lucoa health                 # the image's token-free readiness check, via podman exec
+lucoa update [--check]       # pull Image=; restart only if it changed; auto-rollback if unhealthy
+lucoa rollback               # back to the image that ran before the last update
+lucoa edit                   # edit a copy, validate with quadlet -dryrun, install, daemon-reload
+lucoa reload                 # validate + daemon-reload after editing the file yourself
+lucoa shell [CMD...]         # login shell (or CMD) as the container's default user
+```
+
+- **Updates are per service.** `lucoa update` pulls only this Quadlet's image,
+  unlike `podman auto-update`, which updates every `AutoUpdate=` container of
+  the user. Before restarting, it tags the previous image as
+  `localhost/<quadlet-name>:rollback`. If the new container is not healthy within
+  `LUCOA_HEALTH_TIMEOUT` seconds (default 120), it retags the old image and
+  restarts again. `AutoUpdate=registry` can later move the tag forward again.
+- **Restarting ends live sessions.** `stop`, `restart`, `update` and an applied
+  `edit` end agents and terminals running inside lucoa. Persistent files stay.
+- **`edit` never installs an invalid file.** It keeps the previous version as
+  `lucoa.container.bak` and asks before restarting. Without a terminal it does
+  not restart.
+- **Install a copy, not a symlink.** The script runs with the host user's full
+  privileges, and the repository may be writable from inside lucoa (for
+  example, through a `/Projects` mount). Review changes before rerunning
+  `install`, and prefer running the installed copy over `host/lucoa`.
+- The CLI prints only selected inspect fields. It never prints the environment
+  file or the container's environment.
 
 ### Disposable maintenance shells
 

@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 ci_bin
 
 shell_scripts="build/install-upstream.sh scripts/entrypoint.sh scripts/ssh-shell.sh
-tests/smoke.sh tests/ssh.sh tests/podman-remote.sh host/setup-builder.sh ci/lib.sh ci/install-tools.sh ci/lint.sh ci/build.sh
+tests/smoke.sh tests/ssh.sh tests/podman-remote.sh host/setup-builder.sh host/lucoa ci/lib.sh ci/install-tools.sh ci/lint.sh ci/build.sh
 ci/test.sh ci/scan.sh ci/publish.sh"
 js_scripts="scripts/services.mjs scripts/healthcheck.mjs tests/http.mjs tests/soak.mjs
 ci/bump-versions.mjs"
