@@ -8,7 +8,7 @@ ci_bin
 
 bash_scripts="scripts/services.sh tests/http.sh tests/soak.sh"
 shell_scripts="build/install-upstream.sh build/install-fnm.sh scripts/entrypoint.sh scripts/ssh-shell.sh scripts/healthcheck.sh
-tests/smoke.sh tests/ssh.sh tests/podman-remote.sh host/setup-builder.sh host/lucoa ci/lib.sh ci/install-tools.sh ci/lint.sh ci/build.sh
+tests/smoke.sh tests/ssh.sh tests/podman-remote.sh ci/lib.sh ci/install-tools.sh ci/lint.sh ci/build.sh
 ci/test.sh ci/scan.sh ci/publish.sh"
 js_scripts="ci/bump-versions.mjs"
 
